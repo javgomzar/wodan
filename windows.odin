@@ -8,6 +8,12 @@ import "core:os"
 
 EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
 
+performance_frequency: w32.LARGE_INTEGER
+
+get_wall_clock :: proc() {
+    
+}
+
 create_window :: proc(width: u32, height: u32) -> w32.HWND {
     instance := w32.HINSTANCE(w32.GetModuleHandleW(nil))
 
@@ -50,6 +56,8 @@ create_window :: proc(width: u32, height: u32) -> w32.HWND {
     Result: w32.BOOL = w32.MoveWindow(window, X, Y, window_width, window_height, w32.FALSE)
     Result = w32.ShowWindow(window, nCmdShow)
     Result = w32.UpdateWindow(window)
+
+    w32.QueryPerformanceFrequency(&performance_frequency)
 
     return window
 }
