@@ -4,18 +4,24 @@ import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import "core:math"
-
+import "core:fmt"
 
 N_BACK_BUFFERS  :: 3
 N_DEPTH_BUFFERS :: 1
 
+d3d12_frame_context :: struct {
+    command_alloc: ^d3d12.ICommandAllocator,
+    fence_value:   u64,
+}
+
 d3d12_renderer_context :: struct {
     device:              ^d3d12.IDevice,
     fence:               ^d3d12.IFence,
+    fence_event:         w32.HANDLE,
     swap_chain:          ^dxgi.ISwapChain1,
     command_queue:       ^d3d12.ICommandQueue,
-    command_alloc:       ^d3d12.ICommandAllocator,
     command_list:        ^d3d12.IGraphicsCommandList,
+    frame_context:       [N_BACK_BUFFERS]d3d12_frame_context,
     rtv_heap:            ^d3d12.IDescriptorHeap,
     dsv_heap:            ^d3d12.IDescriptorHeap,
     rtv_descriptor_size: u32,
@@ -33,6 +39,8 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
 
     factory: ^dxgi.IFactory4
     flags: dxgi.CREATE_FACTORY
+
+    renderer_context.fence_event = w32.CreateEventExW(nil, "GPU fence", 0, EVENT_ALL_ACCESS)
 
     // Activate debug layer
     when ODIN_DEBUG {
@@ -93,19 +101,21 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
         log(.Fatal, "Failed to create D3D12 command queue")
     }
 
-    hr = renderer_context.device->CreateCommandAllocator(
-        .DIRECT, 
-        d3d12.ICommandAllocator_UUID, 
-        (^rawptr)(&renderer_context.command_alloc)
-    )
-    if hr < 0 {
-        log(.Fatal, "Failed to create D3D12 command queue")
+    for &frame in renderer_context.frame_context {
+        hr = renderer_context.device->CreateCommandAllocator(
+            .DIRECT, 
+            d3d12.ICommandAllocator_UUID, 
+            (^rawptr)(&frame.command_alloc)
+        )
+        if hr < 0 {
+            log(.Fatal, "Failed to create D3D12 command allocator")
+        }
     }
     
     hr = renderer_context.device->CreateCommandList(
         0, 
         .DIRECT, 
-        renderer_context.command_alloc, 
+        renderer_context.frame_context[0].command_alloc, 
         nil, 
         d3d12.IGraphicsCommandList_UUID, 
         (^rawptr)(&renderer_context.command_list)
@@ -135,6 +145,21 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
     if hr < 0 {
         log(.Fatal, "Failed to create DXGI swap chain")
     }
+
+    output: ^dxgi.IOutput
+    renderer_context.swap_chain->GetContainingOutput(&output)
+
+    output_desc: dxgi.OUTPUT_DESC
+    output->GetDesc(&output_desc)
+
+    // n_modes: u32
+    // output->GetDisplayModeList(.R8G8B8A8_UNORM, {}, &n_modes, nil)
+    // modes := make([]dxgi.MODE_DESC, n_modes)
+    // defer delete(modes)
+    // output->GetDisplayModeList(.R8G8B8A8_UNORM, {}, &n_modes, raw_data(modes))
+    // for mode in modes {
+    //     fmt.printf("%d x %d : %.2f Hz\n", mode.Width, mode.Height, f32(mode.RefreshRate.Numerator) / f32(mode.RefreshRate.Denominator))
+    // }
 
     rtv_heap_desc := d3d12.DESCRIPTOR_HEAP_DESC{
         NumDescriptors = N_BACK_BUFFERS,
@@ -227,8 +252,16 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
 }
 
 render :: proc(width: f32, height: f32) {
-    renderer_context.command_alloc->Reset()
-    renderer_context.command_list->Reset(renderer_context.command_alloc, nil)
+    frame_index := renderer_context.frame % N_BACK_BUFFERS
+    frame_context := &renderer_context.frame_context[frame_index]
+
+    if renderer_context.fence->GetCompletedValue() < frame_context.fence_value {
+        renderer_context.fence->SetEventOnCompletion(renderer_context.frame, renderer_context.fence_event)
+        w32.WaitForSingleObject(renderer_context.fence_event, w32.INFINITE)
+    }
+
+    frame_context.command_alloc->Reset()
+    renderer_context.command_list->Reset(frame_context.command_alloc, nil)
 
     viewport := d3d12.VIEWPORT{
         TopLeftX = 0.0,
@@ -264,7 +297,7 @@ render :: proc(width: f32, height: f32) {
     rtv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
     rtv_descriptor_size := renderer_context.device->GetDescriptorHandleIncrementSize(.RTV)
     renderer_context.rtv_heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
-    rtv_handle.ptr += uint(renderer_context.frame % N_BACK_BUFFERS) * uint(rtv_descriptor_size)
+    rtv_handle.ptr += uint(frame_index) * uint(rtv_descriptor_size)
     dsv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
     renderer_context.dsv_heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
 
@@ -294,16 +327,10 @@ render :: proc(width: f32, height: f32) {
 
     renderer_context.swap_chain->Present(0, {})
     renderer_context.frame += 1
+    frame_context.fence_value = renderer_context.frame
 
     hr := renderer_context.command_queue->Signal(renderer_context.fence, renderer_context.frame)
     if hr < 0 {
         log(.Fatal, "Failed to signal fence")
-    }
-
-    if renderer_context.fence->GetCompletedValue() < renderer_context.frame {
-        hevent := w32.CreateEventExW(nil, "GPU fence", 0, EVENT_ALL_ACCESS)
-        renderer_context.fence->SetEventOnCompletion(renderer_context.frame, hevent)
-        w32.WaitForSingleObject(hevent, w32.INFINITE)
-        w32.CloseHandle(hevent)
     }
 }

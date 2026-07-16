@@ -1,6 +1,8 @@
 package main
 
 
+import "core:fmt"
+
 // monitor :: struct {
 //     name: string,
 //     width: u32,
@@ -39,16 +41,27 @@ main :: proc() {
     log(.Debug, "Running!")
 
     global_memory.running = true
+    last_counter: u64 = get_wall_clock()
     for global_memory.running {
         reset_input(&global_memory.input)
         process_messages(window, &global_memory.input)
         
         if global_memory.input.mouse.left_click.is_down {
+            start_timer()
+            defer end_timer()
+
             log(.Debug, "Click!")
         }
 
         render(f32(window_width), f32(window_height))
+        print_timers()
 
         free_all(context.temp_allocator)
+        clear(&time_records)
+
+        end_counter := get_wall_clock()
+        seconds_elapsed := get_seconds_elapsed(last_counter, end_counter)
+        last_counter = end_counter
+        fmt.printf("FPS: %d\n", i32(1.0 / seconds_elapsed))
     }
 }

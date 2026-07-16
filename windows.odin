@@ -10,8 +10,15 @@ EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
 
 performance_frequency: w32.LARGE_INTEGER
 
-get_wall_clock :: proc() {
-    
+get_wall_clock :: proc() -> u64 {
+    result: w32.LARGE_INTEGER
+    w32.QueryPerformanceCounter(&result)
+    return u64(result)
+}
+
+get_seconds_elapsed :: proc(start: u64, end: u64) -> f32 {
+    elapsed := end - start
+    return f32(elapsed) / f32(performance_frequency)
 }
 
 create_window :: proc(width: u32, height: u32) -> w32.HWND {
