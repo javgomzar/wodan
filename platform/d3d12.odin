@@ -4,7 +4,9 @@ import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import "core:math"
-import "core:fmt"
+
+
+when ODIN_OS == .Windows {
 
 N_BACK_BUFFERS  :: 3
 N_DEPTH_BUFFERS :: 1
@@ -14,7 +16,10 @@ d3d12_frame_context :: struct {
     fence_value:   u64,
 }
 
-d3d12_renderer_context :: struct {
+renderer_context :: struct {
+    window:              w32.HWND,
+    width:               u32,
+    height:              u32,
     device:              ^d3d12.IDevice,
     fence:               ^d3d12.IFence,
     fence_event:         w32.HANDLE,
@@ -31,16 +36,16 @@ d3d12_renderer_context :: struct {
     frame:               u64,
 }
 
-@(private="file")
-renderer_context: d3d12_renderer_context
-
-initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
+initiate_renderer :: proc(renderer: ^renderer_context, width: u32, height: u32) {
     hr: w32.HRESULT
+    renderer.window = w32.GetActiveWindow()
+    renderer.width = width
+    renderer.height = height
 
     factory: ^dxgi.IFactory4
     flags: dxgi.CREATE_FACTORY
 
-    renderer_context.fence_event = w32.CreateEventExW(nil, "GPU fence", 0, EVENT_ALL_ACCESS)
+    renderer.fence_event = w32.CreateEventExW(nil, "GPU fence", 0, EVENT_ALL_ACCESS)
 
     // Activate debug layer
     when ODIN_DEBUG {
@@ -84,25 +89,25 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
     }
     defer adapter->Release()
 
-	hr = d3d12.CreateDevice((^dxgi.IUnknown)(adapter), ._12_0, d3d12.IDevice_UUID, (^rawptr)(&renderer_context.device))
+	hr = d3d12.CreateDevice((^dxgi.IUnknown)(adapter), ._12_0, d3d12.IDevice_UUID, (^rawptr)(&renderer.device))
 	if hr < 0 {
 		log(.Fatal, "Failed to create D3D12 device")
 	}
 
-    renderer_context.device->CreateFence(0, {}, d3d12.IFence_UUID, (^rawptr)(&renderer_context.fence))
+    renderer.device->CreateFence(0, {}, d3d12.IFence_UUID, (^rawptr)(&renderer.fence))
 
     queue_desc := d3d12.COMMAND_QUEUE_DESC{ Type = .DIRECT }
-    hr = renderer_context.device->CreateCommandQueue(
+    hr = renderer.device->CreateCommandQueue(
         &queue_desc, 
         d3d12.ICommandQueue_UUID, 
-        (^rawptr)(&renderer_context.command_queue)
+        (^rawptr)(&renderer.command_queue)
     )
     if hr < 0 {
         log(.Fatal, "Failed to create D3D12 command queue")
     }
 
-    for &frame in renderer_context.frame_context {
-        hr = renderer_context.device->CreateCommandAllocator(
+    for &frame in renderer.frame_context {
+        hr = renderer.device->CreateCommandAllocator(
             .DIRECT, 
             d3d12.ICommandAllocator_UUID, 
             (^rawptr)(&frame.command_alloc)
@@ -112,13 +117,13 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
         }
     }
     
-    hr = renderer_context.device->CreateCommandList(
+    hr = renderer.device->CreateCommandList(
         0, 
         .DIRECT, 
-        renderer_context.frame_context[0].command_alloc, 
+        renderer.frame_context[0].command_alloc, 
         nil, 
         d3d12.IGraphicsCommandList_UUID, 
-        (^rawptr)(&renderer_context.command_list)
+        (^rawptr)(&renderer.command_list)
     )
     if hr < 0 {
         log(.Fatal, "Failed to create D3D12 command list")
@@ -141,13 +146,13 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
         Flags = {.ALLOW_TEARING},
     }
 
-    hr = factory->CreateSwapChainForHwnd(renderer_context.command_queue, window, &swap_chain_desc, nil, nil, &renderer_context.swap_chain)
+    hr = factory->CreateSwapChainForHwnd(renderer.command_queue, renderer.window, &swap_chain_desc, nil, nil, &renderer.swap_chain)
     if hr < 0 {
         log(.Fatal, "Failed to create DXGI swap chain")
     }
 
     output: ^dxgi.IOutput
-    renderer_context.swap_chain->GetContainingOutput(&output)
+    renderer.swap_chain->GetContainingOutput(&output)
 
     output_desc: dxgi.OUTPUT_DESC
     output->GetDesc(&output_desc)
@@ -166,45 +171,45 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
         Type           = .RTV,
         Flags          = {},
     }
-    hr = renderer_context.device->CreateDescriptorHeap(
+    hr = renderer.device->CreateDescriptorHeap(
         &rtv_heap_desc, 
         d3d12.IDescriptorHeap_UUID, 
-        (^rawptr)(&renderer_context.rtv_heap)
+        (^rawptr)(&renderer.rtv_heap)
     )
     if hr < 0 {
         log(.Fatal, "Failed to create RTV descriptor heap")
     }
-    renderer_context.rtv_descriptor_size = renderer_context.device->GetDescriptorHandleIncrementSize(.RTV)
+    renderer.rtv_descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.RTV)
 
     dsv_heap_desc := d3d12.DESCRIPTOR_HEAP_DESC{
         NumDescriptors = N_DEPTH_BUFFERS,
         Type           = .DSV,
         Flags          = {},
     }
-    hr = renderer_context.device->CreateDescriptorHeap(
+    hr = renderer.device->CreateDescriptorHeap(
         &dsv_heap_desc, 
         d3d12.IDescriptorHeap_UUID, 
-        (^rawptr)(&renderer_context.dsv_heap)
+        (^rawptr)(&renderer.dsv_heap)
     )
     if hr < 0 {
         log(.Fatal, "Failed to create DSV descriptor heap")
     }
-    renderer_context.dsv_descriptor_size = renderer_context.device->GetDescriptorHandleIncrementSize(.DSV)
+    renderer.dsv_descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.DSV)
 
-    renderer_context.frame = 0
+    renderer.frame = 0
     rtv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-    renderer_context.rtv_heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
+    renderer.rtv_heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
     for i in 0..<N_BACK_BUFFERS {
-        hr = renderer_context.swap_chain->GetBuffer(u32(i), d3d12.IResource_UUID, (^rawptr)(&renderer_context.render_targets[i]))
+        hr = renderer.swap_chain->GetBuffer(u32(i), d3d12.IResource_UUID, (^rawptr)(&renderer.render_targets[i]))
         if hr < 0 {
             log(.Fatal, "Failed to get swap chain buffers")
         }
-        renderer_context.device->CreateRenderTargetView(renderer_context.render_targets[i], nil, rtv_handle)
-        rtv_handle.ptr += uint(renderer_context.rtv_descriptor_size)
+        renderer.device->CreateRenderTargetView(renderer.render_targets[i], nil, rtv_handle)
+        rtv_handle.ptr += uint(renderer.rtv_descriptor_size)
     }
 
     dsv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-    renderer_context.dsv_heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
+    renderer.dsv_heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
     for i in 0..<N_DEPTH_BUFFERS {
         resource_desc := d3d12.RESOURCE_DESC{
             Dimension = .TEXTURE2D,
@@ -231,57 +236,57 @@ initiate_renderer :: proc(window: w32.HWND, width: u32, height: u32) {
         }
 
         heap_props := d3d12.HEAP_PROPERTIES{ Type = .DEFAULT }
-        hr = renderer_context.device->CreateCommittedResource(
+        hr = renderer.device->CreateCommittedResource(
             &heap_props, 
             {}, 
             &resource_desc, 
             { .DEPTH_WRITE }, 
             &clear, 
             d3d12.IResource_UUID, 
-            (^rawptr)(&renderer_context.depth_stencils[i])
+            (^rawptr)(&renderer.depth_stencils[i])
         )
         if hr < 0 {
             log(.Fatal, "Failed to create depth stencil buffer")
         }
 
-        renderer_context.device->CreateDepthStencilView(renderer_context.depth_stencils[i], nil, dsv_handle)
-        dsv_handle.ptr += uint(renderer_context.dsv_descriptor_size)
+        renderer.device->CreateDepthStencilView(renderer.depth_stencils[i], nil, dsv_handle)
+        dsv_handle.ptr += uint(renderer.dsv_descriptor_size)
     }
 
-    renderer_context.command_list->Close()
+    renderer.command_list->Close()
 }
 
-render :: proc(width: f32, height: f32) {
-    frame_index := renderer_context.frame % N_BACK_BUFFERS
-    frame_context := &renderer_context.frame_context[frame_index]
+render :: proc(renderer: ^renderer_context) {
+    frame_index := renderer.frame % N_BACK_BUFFERS
+    frame_context := &renderer.frame_context[frame_index]
 
-    if renderer_context.fence->GetCompletedValue() < frame_context.fence_value {
-        renderer_context.fence->SetEventOnCompletion(renderer_context.frame, renderer_context.fence_event)
-        w32.WaitForSingleObject(renderer_context.fence_event, w32.INFINITE)
+    if renderer.fence->GetCompletedValue() < frame_context.fence_value {
+        renderer.fence->SetEventOnCompletion(renderer.frame, renderer.fence_event)
+        w32.WaitForSingleObject(renderer.fence_event, w32.INFINITE)
     }
 
     frame_context.command_alloc->Reset()
-    renderer_context.command_list->Reset(frame_context.command_alloc, nil)
+    renderer.command_list->Reset(frame_context.command_alloc, nil)
 
     viewport := d3d12.VIEWPORT{
         TopLeftX = 0.0,
         TopLeftY = 0.0,
-        Width = width,
-        Height = height,
+        Width = f32(renderer.width),
+        Height = f32(renderer.height),
         MinDepth = 0.0,
         MaxDepth = 1.0
     }
-    renderer_context.command_list->RSSetViewports(1, &viewport)
+    renderer.command_list->RSSetViewports(1, &viewport)
 
     scissor_rect :=  d3d12.RECT{
         left = 0,
         top = 0,
-        right = i32(width),
-        bottom = i32(height),
+        right = i32(renderer.width),
+        bottom = i32(renderer.height),
     }
-    renderer_context.command_list->RSSetScissorRects(1, &scissor_rect)
+    renderer.command_list->RSSetScissorRects(1, &scissor_rect)
 
-    back_buffer := renderer_context.render_targets[renderer_context.frame % N_BACK_BUFFERS]
+    back_buffer := renderer.render_targets[renderer.frame % N_BACK_BUFFERS]
     barrier := d3d12.RESOURCE_BARRIER{
         Type = .TRANSITION,
         Flags = {},
@@ -292,20 +297,20 @@ render :: proc(width: f32, height: f32) {
             Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
         }
     }
-    renderer_context.command_list->ResourceBarrier(1, &barrier)
+    renderer.command_list->ResourceBarrier(1, &barrier)
 
     rtv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-    rtv_descriptor_size := renderer_context.device->GetDescriptorHandleIncrementSize(.RTV)
-    renderer_context.rtv_heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
+    rtv_descriptor_size := renderer.device->GetDescriptorHandleIncrementSize(.RTV)
+    renderer.rtv_heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
     rtv_handle.ptr += uint(frame_index) * uint(rtv_descriptor_size)
     dsv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-    renderer_context.dsv_heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
+    renderer.dsv_heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
 
-    clear_color := [4]f32{0.5 + 0.5*math.sin(f32(renderer_context.frame) / 100.0), 0.0, 0.5, 1.0}
-    renderer_context.command_list->ClearRenderTargetView(rtv_handle, &clear_color, 0, nil)
-    renderer_context.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
+    clear_color := [4]f32{0.5 + 0.5*math.sin(f32(renderer.frame) / 100.0), 0.0, 0.5, 1.0}
+    renderer.command_list->ClearRenderTargetView(rtv_handle, &clear_color, 0, nil)
+    renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
     
-    renderer_context.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
+    renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
 
     barrier = d3d12.RESOURCE_BARRIER{
         Type = .TRANSITION,
@@ -317,20 +322,22 @@ render :: proc(width: f32, height: f32) {
             Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
         }
     }
-    renderer_context.command_list->ResourceBarrier(1, &barrier)
-    renderer_context.command_list->Close()
+    renderer.command_list->ResourceBarrier(1, &barrier)
+    renderer.command_list->Close()
 
     list := []^d3d12.ICommandList{
-        renderer_context.command_list
+        renderer.command_list
     }
-    renderer_context.command_queue->ExecuteCommandLists(1, raw_data(list))
+    renderer.command_queue->ExecuteCommandLists(1, raw_data(list))
 
-    renderer_context.swap_chain->Present(0, {})
-    renderer_context.frame += 1
-    frame_context.fence_value = renderer_context.frame
+    renderer.swap_chain->Present(0, {})
+    renderer.frame += 1
+    frame_context.fence_value = renderer.frame
 
-    hr := renderer_context.command_queue->Signal(renderer_context.fence, renderer_context.frame)
+    hr := renderer.command_queue->Signal(renderer.fence, renderer.frame)
     if hr < 0 {
         log(.Fatal, "Failed to signal fence")
     }
+}
+
 }

@@ -6,7 +6,10 @@ import "core:os"
 
 game_memory :: struct {
     input: input_context,
+    renderer: renderer_context,
     code: game_code,
+    window_width: u32,
+    window_height: u32,
     initialized: bool,
 }
 
@@ -18,9 +21,6 @@ log_level :: enum {
     Fatal
 }
 
-window_width: u32 = 1280
-window_height: u32 = 720
-
 running: bool
 
 main :: proc() {
@@ -29,11 +29,13 @@ main :: proc() {
     input := &memory.input
     setup_logging()
 
-    window := create_window(window_width, window_height)
-    initiate_renderer(window, window_width, window_height)
+    memory.window_width = 1280
+    memory.window_height = 720
+
+    window := create_window(memory.window_width, memory.window_height)
 
     // Delete old .pdb files:
-    old_pdbs, error := os.glob("bin/game*.pdb")
+    old_pdbs, error := os.glob("bin/game?*.pdb")
     if error != nil do log(.Fatal, "Failed to search for old PDB files")
     for pdb_file in old_pdbs {
         error := os.remove(pdb_file)
@@ -54,9 +56,6 @@ main :: proc() {
         update_if_newer_code(&memory)
 
         memory.code.update(&memory)
-
-        render(f32(window_width), f32(window_height))
-        print_timers()
 
         free_all(context.temp_allocator)
         clear(&time_records)

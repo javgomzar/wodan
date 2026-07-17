@@ -8,8 +8,9 @@ import "core:io"
 
 game_code :: struct {
     library: dynlib.Library,
-    update: proc(memory: ^game_memory),
     initialize: proc(memory: ^game_memory),
+    reload: proc(memory: ^game_memory),
+    update: proc(memory: ^game_memory),
     timestamp: time.Time
 }
 
@@ -29,13 +30,17 @@ load_code :: proc(code: ^game_code) {
     code.library, ok = dynlib.load_library(temp_dll_path)
     if ok {
         fun: rawptr
-        fun, ok = dynlib.symbol_address(code.library, "update_game_state")
-        if ok {
-            code.update = cast(proc(memory: ^game_memory))(fun)
-        }
         fun, ok = dynlib.symbol_address(code.library, "initialize_game_state")
         if ok {
             code.initialize = cast(proc(memory: ^game_memory))(fun)
+        }
+        fun, ok = dynlib.symbol_address(code.library, "reload_game_state")
+        if ok {
+            code.reload = cast(proc(memory: ^game_memory))(fun)
+        }
+        fun, ok = dynlib.symbol_address(code.library, "update_game_state")
+        if ok {
+            code.update = cast(proc(memory: ^game_memory))(fun)
         }
         code.timestamp, error = os.modification_time_by_path(source_dll_path)
         if error != nil do log(.Fatal, "Failed to check modification time for source DLL")
@@ -61,6 +66,6 @@ update_if_newer_code :: proc(memory: ^game_memory) {
 
         load_code(code)
         log(.Info, "Code has been reloaded")
-        code.initialize(memory)
+        code.reload(memory)
     }
 }
