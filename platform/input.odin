@@ -54,7 +54,7 @@ controller_key :: enum {
     Back,
 }
 
-game_input :: struct {
+input_context :: struct {
     mode: input_mode,
     keyboard: struct {
         key: [keyboard_key]button_state,
@@ -83,7 +83,7 @@ game_input :: struct {
     },
 }
 
-reset_input :: proc(input: ^game_input) {
+reset_input :: proc(input: ^input_context) {
     for &button, key in input.keyboard.key {
         reset_button_state(&button)
     }

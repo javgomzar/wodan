@@ -2,7 +2,6 @@ package main
 
 import "core:fmt"
 
-
 time_record :: struct {
     start: u64,
     end: u64,

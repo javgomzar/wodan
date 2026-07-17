@@ -2,13 +2,13 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build",
+            "label": "compile_platform",
             "type": "shell",
             "command": "odin",
             "args": [
                 "build",
-                ".",
-                "-out:bin\\run.exe",
+                "platform",
+                "-out:bin/run.exe",
                 "-debug",
                 "-subsystem:windows"
             ],
@@ -19,6 +19,47 @@
             "presentation": {
                 "close": false
             }
+        },
+        {
+            "label": "compile_game",
+            "type": "shell",
+            "command": "odin",
+            "args": [
+                "build",
+                "game",
+                "-build-mode:dll",
+                "-out:bin/game.dll",
+                "-debug"
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "close": false
+            }
+        },
+        {
+            "label": "hot_reload",
+            "type": "shell",
+            "command": "odin",
+            "args": [
+                "run",
+                "build",
+                "-out:bin/hot.exe"
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "close": false
+            }
+        },
+        {
+            "label": "build",
+            "dependsOn": ["compile_platform", "compile_game"],
+            "dependsOrder": "parallel"
         }
     ]
 }

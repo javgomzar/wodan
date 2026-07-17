@@ -1,21 +1,14 @@
 package main
 
-
 import "core:fmt"
+import "core:os"
 
-// monitor :: struct {
-//     name: string,
-//     width: u32,
-//     height: u32,
-// }
 
 game_memory :: struct {
-    // monitors: []monitor,
-    input: game_input,
-    running: bool,
+    input: input_context,
+    code: game_code,
+    initialized: bool,
 }
-
-global_memory: game_memory
 
 log_level :: enum {
     Debug,
@@ -25,33 +18,42 @@ log_level :: enum {
     Fatal
 }
 
-// log :: proc(level: log_level, message: string) {
-//     fmt.printf()
-// }
-
 window_width: u32 = 1280
 window_height: u32 = 720
 
+running: bool
+
 main :: proc() {
+    memory: game_memory
+    code := &memory.code
+    input := &memory.input
     setup_logging()
 
     window := create_window(window_width, window_height)
     initiate_renderer(window, window_width, window_height)
 
+    // Delete old .pdb files:
+    old_pdbs, error := os.glob("bin/game*.pdb")
+    if error != nil do log(.Fatal, "Failed to search for old PDB files")
+    for pdb_file in old_pdbs {
+        error := os.remove(pdb_file)
+        if error != nil do log(.Fatal, "Failed to remove old PDB files")
+    }
+
+    load_code(code)
+    code.initialize(&memory)
+
     log(.Debug, "Running!")
 
-    global_memory.running = true
+    running = true
     last_counter: u64 = get_wall_clock()
-    for global_memory.running {
-        reset_input(&global_memory.input)
-        process_messages(window, &global_memory.input)
-        
-        if global_memory.input.mouse.left_click.is_down {
-            start_timer()
-            defer end_timer()
+    for running {
+        reset_input(input)
+        process_messages(window, input)
 
-            log(.Debug, "Click!")
-        }
+        update_if_newer_code(&memory)
+
+        memory.code.update(&memory)
 
         render(f32(window_width), f32(window_height))
         print_timers()

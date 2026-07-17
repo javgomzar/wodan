@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:time"
 import "core:os"
 
+when ODIN_OS == .Windows {
 
 EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
 
@@ -72,7 +73,7 @@ create_window :: proc(width: u32, height: u32) -> w32.HWND {
 win_proc :: proc "stdcall" (window: w32.HWND, message: w32.UINT, wparam: w32.WPARAM, lparam: w32.LPARAM) -> w32.LRESULT {
     switch message {
         case w32.WM_DESTROY:
-            global_memory.running = false
+            running = false
             w32.PostQuitMessage(0)
     }
     return w32.DefWindowProcW(window, message, wparam, lparam)
@@ -140,7 +141,7 @@ log :: proc(level: log_level, message: string) {
     }
 }
 
-process_messages :: proc(window: w32.HWND, input: ^game_input) {
+process_messages :: proc(window: w32.HWND, input: ^input_context) {
     msg: w32.MSG
     for w32.PeekMessageW(&msg, window, 0, 0, w32.PM_REMOVE) {
         switch msg.message {
@@ -418,4 +419,6 @@ process_messages :: proc(window: w32.HWND, input: ^game_input) {
                 w32.DispatchMessageW(&msg)
         }
     }
+}
+
 }
