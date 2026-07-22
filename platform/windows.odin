@@ -74,7 +74,7 @@ create_window :: proc(width: u32, height: u32) -> w32.HWND {
 win_proc :: proc "stdcall" (window: w32.HWND, message: w32.UINT, wparam: w32.WPARAM, lparam: w32.LPARAM) -> w32.LRESULT {
     switch message {
         case w32.WM_DESTROY:
-            running = false
+            memory.running = false
             w32.PostQuitMessage(0)
     }
     return w32.DefWindowProcW(window, message, wparam, lparam)
