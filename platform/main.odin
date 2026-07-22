@@ -5,12 +5,11 @@ import "core:os"
 
 
 game_memory :: struct {
-    input: input_context,
-    renderer: renderer_context,
-    code: game_code,
-    window_width: u32,
-    window_height: u32,
-    initialized: bool,
+    input:         input_context,
+    renderer:      renderer_context,
+    code:          game_code,
+    time:          f32,
+    initialized:   bool,
 }
 
 log_level :: enum {
@@ -29,10 +28,10 @@ main :: proc() {
     input := &memory.input
     setup_logging()
 
-    memory.window_width = 1280
-    memory.window_height = 720
+    memory.renderer.width = 1280
+    memory.renderer.height = 720
 
-    window := create_window(memory.window_width, memory.window_height)
+    window := create_window(memory.renderer.width, memory.renderer.height)
 
     // Delete old .pdb files:
     old_pdbs, error := os.glob("bin/game?*.pdb")
@@ -43,6 +42,7 @@ main :: proc() {
     }
 
     load_code(code)
+    code.reload(&memory)
     code.initialize(&memory)
 
     log(.Debug, "Running!")

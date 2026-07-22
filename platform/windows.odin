@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:time"
 import "core:os"
 
+
 when ODIN_OS == .Windows {
 
 EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
