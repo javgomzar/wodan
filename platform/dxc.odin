@@ -2,11 +2,114 @@ package main
 
 import "vendor:directx/dxc"
 import "vendor:directx/d3d12"
+import "vendor:directx/dxgi"
 import w32 "core:sys/windows"
 import "core:path/filepath"
 import "core:fmt"
 import "core:os"
+import "core:time"
+import "core:reflect"
+import "base:runtime"
 
+
+shader_type :: enum {
+    vertex,
+    domain,
+    hull,
+    geometry,
+    pixel,
+    compute,
+    library,
+}
+
+shader_target := [shader_type]w32.wstring {
+    .vertex =   "vs_6_0",
+    .domain =   "ds_6_0",
+    .hull =     "hs_6_0",
+    .geometry = "gs_6_0",
+    .pixel =    "ps_6_0",
+    .compute =  "cs_6_0",
+    .library =  "lib_6_0",
+}
+
+shader_id :: enum {
+    None,
+    Vertex_Screen,
+    Vertex_Passthrough,
+    Pixel_Color,
+}
+
+shader_paths := [shader_id]string {
+    .None =               "",
+    .Vertex_Screen =      "assets/shaders/HLSL/vertex/screen.vsh",
+    .Vertex_Passthrough = "assets/shaders/HLSL/vertex/passthrough.vsh",
+    .Pixel_Color =        "assets/shaders/HLSL/pixel/color.psh",
+}
+
+shader_pipeline_id :: enum {
+    test_pipeline,
+}
+
+shader_pipeline_entry :: struct {
+    primitive:      d3d12.PRIMITIVE_TOPOLOGY_TYPE,
+    stage:          [shader_type]shader_id,
+}
+
+shader_pipeline_entries := [shader_pipeline_id]shader_pipeline_entry {
+    .test_pipeline = {
+        primitive = .TRIANGLE,
+        stage = {
+            .vertex =   .Vertex_Passthrough,
+            .domain =   .None,
+            .hull =     .None,
+            .geometry = .None,
+            .pixel =    .Pixel_Color,
+            .compute =  .None,
+            .library =  .None,
+        },
+    }
+}
+
+global_constant_buffer :: struct #align(16) {
+    projection: matrix[4, 4]f32,
+    view:       matrix[4, 4]f32,
+    resolution: [2]f32,
+    mouse:      [2]f32,
+    last_mouse: [2]f32,
+    time:       f32,
+}
+
+constant_buffer_types :: []typeid {
+    global_constant_buffer,
+}
+
+set_constant_buffer :: proc(renderer: ^renderer_context, value: ^$T) {
+    for type, id in constant_buffer_types {
+        if T == type {
+            read_range := d3d12.RANGE{0, 0}
+            mapped_data: rawptr = nil
+            renderer.constant_buffers[id]->Map(0, &read_range, &mapped_data)
+            runtime.mem_copy(mapped_data, value, size_of(T))
+            return
+        }
+    }
+}
+
+shader_pipeline :: struct {
+    root_signature: ^d3d12.IRootSignature,
+    state:          ^d3d12.IPipelineState,
+}
+
+dxc_shader :: struct {
+    id:                shader_id,
+    path:              string,
+    type:              shader_type,
+    last_modification: time.Time,
+    reflection:        ^d3d12.IShaderReflection,
+    layout:            d3d12.INPUT_LAYOUT_DESC,
+    blob:              ^dxc.IBlob,
+    bytecode:          d3d12.SHADER_BYTECODE,
+}
 
 dxc_compiler :: struct {
     utils:           ^dxc.IUtils,
@@ -14,73 +117,54 @@ dxc_compiler :: struct {
     include_handler: ^dxc.IIncludeHandler,
 }
 
-shader_id :: enum {
-    Vertex_Screen,
-    Vertex_Passthrough,
-    Pixel_Color,
-}
-
-dxc_shader :: struct {
-    id:       shader_id,
-    path:     string,
-    target:   w32.wstring,
-    blob:     ^dxc.IBlob,
-    bytecode: d3d12.SHADER_BYTECODE,
-}
-
-shader_paths := [shader_id]string {
-    .Vertex_Screen =      "assets/shaders/HLSL/vertex/screen.vsh",
-    .Vertex_Passthrough = "assets/shaders/HLSL/vertex/passthrough.vsh",
-    .Pixel_Color =        "assets/shaders/HLSL/pixel/color.psh",
-}
-
 initialize_shader_compiler :: proc(compiler: ^dxc_compiler) {
     hr := dxc.CreateInstance(dxc.Utils_CLSID, dxc.IUtils_UUID, cast(rawptr)&compiler.utils)
-    if hr < 0 {
-        log(.Fatal, "Failed to create DirectX compiler utils object")
-    }
+    if hr < 0 do log(.Fatal, "Failed to create DirectX compiler utils object")
 
     hr = dxc.CreateInstance(dxc.Compiler_CLSID, dxc.ICompiler3_UUID, cast(rawptr)&compiler.compiler)
-    if hr < 0 {
-        log(.Fatal, "Failed to create DirectX compiler object")
-    }
+    if hr < 0 do log(.Fatal, "Failed to create DirectX compiler object")
 
     hr = compiler.utils->CreateDefaultIncludeHandler(&compiler.include_handler)
-    if hr < 0 {
-        log(.Fatal, "Failed to create DirectX compiler include handler")
-    }
+    if hr < 0 do log(.Fatal, "Failed to create DirectX compiler include handler")
 }
 
 initialize_shader :: proc(id: shader_id, shader_list: ^[shader_id]dxc_shader) {
     shader := &shader_list[id]
     shader.id = id
     shader.path = shader_paths[id]
+    error: os.Error
+    shader.last_modification, error = os.modification_time_by_path(shader.path)
+    if error != nil do log(.Error, fmt.tprintf("Failed to check modification time for file %s", shader.path))
     extension := filepath.ext(shader.path)
     switch extension {
         case ".vsh":
-            shader.target = "vs_6_0"
-        case ".psh":
-            shader.target = "ps_6_0"
+            shader.type = .vertex
         case ".dsh":
-            shader.target = "ds_6_0"
+            shader.type = .domain
         case ".hsh":
-            shader.target = "hs_6_0"
+            shader.type = .hull
         case ".gsh":
-            shader.target = "gs_6_0"
+            shader.type = .geometry
+        case ".psh":
+            shader.type = .pixel
         case ".csh":
-            shader.target = "cs_6_0"
+            shader.type = .compute
         case ".libsh":
-            shader.target = "lib_6_0"
+            shader.type = .library
         case:
             log(.Fatal, fmt.tprintf("Invalid file extension %s", extension))
     }
 }
 
-compile_shader :: proc(compiler: dxc_compiler, shader: ^dxc_shader) -> bool {
+compile_shader :: proc(compiler: ^dxc_compiler, shader: ^dxc_shader) -> bool {
     data, error := os.read_entire_file(shader.path, context.temp_allocator)
     if error != nil{
-        log(.Error, fmt.tprintf("Failed to read shader file `%s`", shader.path))
+        log(.Error, fmt.tprintf("Failed to read shader file %s", shader.path))
         return false
+    }
+    defer {
+        shader.last_modification, error = os.modification_time_by_path(shader.path)
+        if error != nil do log(.Error, fmt.tprintf("Failed to check modification time for file %s", shader.path))
     }
 
     buffer := dxc.Buffer{
@@ -90,7 +174,8 @@ compile_shader :: proc(compiler: dxc_compiler, shader: ^dxc_shader) -> bool {
     }    
 
     args: ^dxc.ICompilerArgs
-    hr := compiler.utils->BuildArguments(nil, "main", shader.target, nil, 0, nil, 0, &args)
+    source_name := w32.utf8_to_wstring(shader.path)
+    hr := compiler.utils->BuildArguments(source_name, "main", shader_target[shader.type], nil, 0, nil, 0, &args)
     if hr < 0 {
         log(.Error, "Failed to build arguments for DXC Compiler")
         return false
@@ -100,7 +185,7 @@ compile_shader :: proc(compiler: dxc_compiler, shader: ^dxc_shader) -> bool {
     result: ^dxc.IResult
     hr = compiler.compiler->Compile(&buffer, args->GetArguments(), args->GetCount(), compiler.include_handler, dxc.IResult_UUID, &result)
     if hr < 0 {
-        log(.Error, fmt.tprintf("Failed to compile shader %s", shader.path))
+        log(.Error, fmt.tprintf("Failed to compile shader %s", shader.id))
         return false
     }
     defer result->Release()
@@ -123,6 +208,243 @@ compile_shader :: proc(compiler: dxc_compiler, shader: ^dxc_shader) -> bool {
         BytecodeLength = shader.blob->GetBufferSize(),
         pShaderBytecode = shader.blob->GetBufferPointer(),
     }
-    log(.Info, fmt.tprintf("Shader .%s compiled correctly", shader.id))
+    log(.Info, fmt.tprintf("Shader %s compiled correctly", shader.id))
+
+    // Shader reflection
+    reflection_blob: ^dxc.IBlob
+    hr = result->GetOutput(.REFLECTION, dxc.IBlob_UUID, &reflection_blob, nil)
+    if hr < 0 do log(.Error, fmt.tprintf("Failed to get reflection data for shader %s", shader.id))
+    else {
+        reflection_buffer := dxc.Buffer{
+            Ptr = reflection_blob->GetBufferPointer(),
+            Size = reflection_blob->GetBufferSize(),
+            Encoding = 0,
+        }
+
+        hr = compiler.utils->CreateReflection(&reflection_buffer, d3d12.IShaderReflection_UUID, &shader.reflection)
+        if hr < 0 {
+            log(.Error, fmt.tprintf("Failed to get reflection data for shader %s", shader.id))
+            return true
+        }
+    }
+
     return true
+}
+
+update_if_newer_shader :: proc(compiler: ^dxc_compiler, shader: ^dxc_shader) -> bool {
+    timestamp, error := os.modification_time_by_path(shader.path)
+    if error != nil {
+        log(.Error, fmt.tprintf("Failed to check modification time for file %s", shader.path))
+        return false
+    }
+
+    delta := time.diff(shader.last_modification, timestamp)
+    if delta > 0 {
+        temp_shader := shader^
+        ok := compile_shader(compiler, &temp_shader)
+        if ok {
+            shader.blob->Release()
+            shader^ = temp_shader
+
+            log(.Info, fmt.tprintf("Shader %s hot-reloaded", shader.id))
+        }
+        shader.last_modification = timestamp
+        return ok
+    }
+
+    return false
+}
+
+get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.INPUT_ELEMENT_DESC {
+    format: dxgi.FORMAT
+    component_count: u32 = 0
+    for i: u32 = 0; i < 4; i += 1 {
+        if (parameter.Mask & (1 << i)) > 0 do component_count += 1
+    }
+    switch parameter.ComponentType {
+        case .FLOAT32:
+            switch component_count {
+                case 1: format = .R32_FLOAT
+                case 2: format = .R32G32_FLOAT
+                case 3: format = .R32G32B32_FLOAT
+                case 4: format = .R32G32B32A32_FLOAT
+            }
+        case .UINT32:
+            switch component_count {
+                case 1: format = .R32_UINT
+                case 2: format = .R32G32_UINT
+                case 3: format = .R32G32B32_UINT
+                case 4: format = .R32G32B32A32_UINT
+            }
+        case .SINT32:
+            switch component_count {
+                case 1: format = .R32_SINT
+                case 2: format = .R32G32_SINT
+                case 3: format = .R32G32B32_SINT
+                case 4: format = .R32G32B32A32_SINT
+            }
+        case .UNKNOWN:
+            switch component_count {
+                case 1: format = .R32_TYPELESS
+                case 2: format = .R32G32_TYPELESS
+                case 3: format = .R32G32B32_TYPELESS
+                case 4: format = .R32G32B32A32_TYPELESS
+            }
+    }
+    
+    name := string(parameter.SemanticName)
+    input_slot: u32 = name == "POSITION" ? 0 : 1
+    offset: u32
+    switch name {
+        case "POSITION", "NORMAL":
+            offset = 0
+        case "TEXCOORD":
+            offset = 12
+        case "COLOR":
+            offset = 20
+        case:
+            log(.Fatal, "Invalid semantic name")
+    }
+
+    return d3d12.INPUT_ELEMENT_DESC{
+        SemanticName = parameter.SemanticName,
+        SemanticIndex = parameter.SemanticIndex,
+        InputSlot = input_slot,
+        AlignedByteOffset = offset,
+        Format = format,
+        InputSlotClass = .PER_VERTEX_DATA,
+    }
+}
+
+// build_root_signature :: proc(renderer: ^renderer_context) {
+//     shader_desc: d3d12.SHADER_DESC
+//     for shader, id in renderer.shaders {
+//         if id == .None do continue
+//         shader.reflection->GetDesc(&shader_desc)
+//         if shader_desc.ConstantBuffers > 0 {
+//             for i in 0..<shader_desc.ConstantBuffers {
+//                 cb_reflection := shader.reflection->GetConstantBufferByIndex(i)
+//                 cb_desc: d3d12.SHADER_BUFFER_DESC
+//                 cb_reflection->GetDesc(&cb_desc)
+
+//                 cb_desc.
+
+//                 cb_type := constant_buffer_types[i]
+//                 assert(cb_desc.Variables == reflect.struct_field_count(cb_type))
+
+//                 for j in cb_desc.Variables {
+//                     var := cb_reflection->GetVariableByIndex(j)
+//                     var.
+//                 }
+//             }
+//         }
+//     }
+// }
+
+initialize_pipeline :: proc(id: shader_pipeline_id, renderer: ^renderer_context) {
+    entry := shader_pipeline_entries[id]
+    pipeline := &renderer.shader_pipelines[id]
+    
+    shader_desc: d3d12.SHADER_DESC
+    vertex_shader := &renderer.shaders[entry.stage[.vertex]]
+    vertex_shader.reflection->GetDesc(&shader_desc)
+    
+    input_elements: [8]d3d12.INPUT_ELEMENT_DESC
+    parameter: d3d12.SIGNATURE_PARAMETER_DESC
+    for i in 0..<shader_desc.InputParameters {
+        vertex_shader.reflection->GetInputParameterDesc(i, &parameter)
+        input_elements[i] = get_input_element(parameter)
+    }
+    input_layout := d3d12.INPUT_LAYOUT_DESC{
+        NumElements = shader_desc.InputParameters,
+        pInputElementDescs = raw_data(input_elements[:]),
+    }
+
+    root_params: [8]d3d12.ROOT_PARAMETER
+
+    bind_desc: d3d12.SHADER_INPUT_BIND_DESC
+    for i in 0..<shader_desc.BoundResources {
+        hr := vertex_shader.reflection->GetResourceBindingDesc(i, &bind_desc)
+        if hr < 0 do log(.Fatal, fmt.tprintf("Failed to retrieve the resource binding with index %d"))
+        if bind_desc.Type == .CBUFFER {
+            root_params[i] = {
+                ParameterType = .CBV,
+                Descriptor = {
+                    RegisterSpace = bind_desc.Space,
+                    ShaderRegister = bind_desc.BindPoint,
+                },
+                ShaderVisibility = .ALL,
+            }
+        }
+    }
+
+    root_signature_desc := d3d12.ROOT_SIGNATURE_DESC{
+        NumParameters = shader_desc.ConstantBuffers,
+        pParameters = raw_data(root_params[:]),
+        Flags = {.ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT},
+    }
+
+    signature_blob, error: ^d3d12.IBlob
+    hr := d3d12.SerializeRootSignature(&root_signature_desc, ._1, &signature_blob, &error)
+    if hr < 0 do log(.Fatal, "Failed to serialize D3D12 root signature")
+    hr = renderer.device->CreateRootSignature(
+        0, 
+        signature_blob->GetBufferPointer(), 
+        signature_blob->GetBufferSize(), 
+        d3d12.IRootSignature_UUID,
+        (^rawptr)(&pipeline.root_signature)
+    )
+    if hr < 0 do log(.Fatal, "Failed to create D3D12 root signature")
+    defer signature_blob->Release()
+
+    pixel_shader := &renderer.shaders[entry.stage[.pixel]]
+    pipeline_desc := d3d12.GRAPHICS_PIPELINE_STATE_DESC{
+        InputLayout = input_layout,
+        PrimitiveTopologyType = entry.primitive,
+        NumRenderTargets = 1,
+        DSVFormat = .UNKNOWN,
+        SampleMask = max(u32),
+        SampleDesc = { Count = 1, Quality = 0, },
+        NodeMask = 0,
+        pRootSignature = pipeline.root_signature,
+        BlendState = {
+            AlphaToCoverageEnable = w32.FALSE,
+            IndependentBlendEnable = w32.FALSE,
+        },
+        DepthStencilState = {
+            DepthEnable = w32.FALSE,
+            StencilEnable = w32.FALSE,
+        },
+        RasterizerState = {
+            FillMode = .SOLID,
+            CullMode = .BACK,
+            FrontCounterClockwise = w32.FALSE,
+            DepthBias = d3d12.DEFAULT_DEPTH_BIAS,
+            DepthBiasClamp = d3d12.DEFAULT_DEPTH_BIAS_CLAMP,
+            SlopeScaledDepthBias = d3d12.DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
+            DepthClipEnable = w32.TRUE,
+            MultisampleEnable = w32.FALSE,
+            AntialiasedLineEnable = w32.FALSE,
+            ForcedSampleCount = 0,
+            ConservativeRaster = .OFF,
+        },
+        VS = vertex_shader.bytecode,
+        PS = pixel_shader.bytecode,
+    }
+
+    pipeline_desc.RTVFormats[0] = .R8G8B8A8_UNORM
+    pipeline_desc.BlendState.RenderTarget[0] = {
+        BlendEnable = w32.FALSE,
+        LogicOpEnable = w32.FALSE,
+        SrcBlend = .ONE,
+        DestBlend = .ZERO,
+        BlendOp = .ADD,
+        SrcBlendAlpha = .ONE,
+        DestBlendAlpha = .ZERO,
+        BlendOpAlpha = .ADD,
+        LogicOp = .NOOP,
+        RenderTargetWriteMask = 0xf,
+    }
+
+    renderer.device->CreateGraphicsPipelineState(&pipeline_desc, d3d12.IPipelineState_UUID, (^rawptr)(&pipeline.state))
 }

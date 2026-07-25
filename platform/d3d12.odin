@@ -5,6 +5,7 @@ import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import "core:math"
 import "core:mem"
+import "core:os"
 import "base:runtime"
 
 
@@ -30,8 +31,6 @@ renderer_context :: struct {
     swap_chain:          ^dxgi.ISwapChain1,
     command_queue:       ^d3d12.ICommandQueue,
     command_list:        ^d3d12.IGraphicsCommandList,
-    pipeline:            ^d3d12.IPipelineState,
-    root_signature:      ^d3d12.IRootSignature,
     frame_context:       [N_BACK_BUFFERS]d3d12_frame_context,
     rtv_heap:            ^d3d12.IDescriptorHeap,
     dsv_heap:            ^d3d12.IDescriptorHeap,
@@ -43,6 +42,7 @@ renderer_context :: struct {
     attribute_buffer:    d3d12.VERTEX_BUFFER_VIEW,
     shader_compiler:     dxc_compiler,
     shaders:             [shader_id]dxc_shader,
+    shader_pipelines:    [shader_pipeline_id]shader_pipeline,
     global_buffers:      [N_BACK_BUFFERS]^d3d12.IResource,
     global_mapped:       [N_BACK_BUFFERS]rawptr,
 }
@@ -105,7 +105,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
 
     renderer.device->CreateFence(0, {}, d3d12.IFence_UUID, (^rawptr)(&renderer.fence))
 
-    queue_desc := d3d12.COMMAND_QUEUE_DESC{ Type = .DIRECT }
+    queue_desc := d3d12.COMMAND_QUEUE_DESC{ Type = .DIRECT, NodeMask = 0, }
     hr = renderer.device->CreateCommandQueue(
         &queue_desc, 
         d3d12.ICommandQueue_UUID, 
@@ -278,155 +278,15 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
     initialize_shader_compiler(&renderer.shader_compiler)
 
     for id in shader_id {
+        if id == .None do continue
         initialize_shader(id, &renderer.shaders)
-        compile_shader(renderer.shader_compiler, &renderer.shaders[id])
+        compile_shader(&renderer.shader_compiler, &renderer.shaders[id])
     }
 
-    root_params: []d3d12.ROOT_PARAMETER = {
-        {
-            ParameterType = .CBV,
-            Descriptor = {
-                RegisterSpace = 0,
-                ShaderRegister = 0,
-            },
-            ShaderVisibility = .ALL,
-        }
+    // Pipelines
+    for &pipeline, id in renderer.shader_pipelines {
+        initialize_pipeline(id, renderer)
     }
-
-    root_signature_desc := d3d12.ROOT_SIGNATURE_DESC{
-        NumParameters = u32(len(root_params)),
-        pParameters = raw_data(root_params),
-        Flags = {.ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT},
-    }
-
-    signature, error: ^d3d12.IBlob
-    hr = d3d12.SerializeRootSignature(&root_signature_desc, ._1, &signature, &error)
-    if hr < 0 {
-        log(.Fatal, "Failed to serialize D3D12 root signature")
-    }
-    hr = renderer.device->CreateRootSignature(
-        0, 
-        signature->GetBufferPointer(), 
-        signature->GetBufferSize(), 
-        d3d12.IRootSignature_UUID,
-        (^rawptr)(&renderer.root_signature)
-    )
-    if hr < 0 {
-        log(.Fatal, "Failed to create D3D12 root signature")
-    }
-
-    input_layout :: []d3d12.INPUT_ELEMENT_DESC{
-        {
-            SemanticName = "POSITION",
-            SemanticIndex = 0,
-            AlignedByteOffset = 0,
-            Format = .R32G32B32_FLOAT,
-            InputSlot = 0,
-            InputSlotClass = .PER_VERTEX_DATA,
-        },
-        {
-            SemanticName = "NORMAL",
-            SemanticIndex = 0,
-            AlignedByteOffset = 0,
-            Format = .R32G32B32_FLOAT,
-            InputSlot = 1,
-            InputSlotClass = .PER_VERTEX_DATA,
-        },
-        {
-            SemanticName = "TEXCOORD",
-            SemanticIndex = 0,
-            AlignedByteOffset = 12,
-            Format = .R32G32_FLOAT,
-            InputSlot = 1,
-            InputSlotClass = .PER_VERTEX_DATA,
-        },
-        {
-            SemanticName = "COLOR",
-            SemanticIndex = 0,
-            AlignedByteOffset = 20,
-            Format = .R32G32B32A32_FLOAT,
-            InputSlot = 1,
-            InputSlotClass = .PER_VERTEX_DATA,
-        },
-    }
-
-    input_layout_desc := d3d12.INPUT_LAYOUT_DESC{
-        NumElements = u32(len(input_layout)),
-        pInputElementDescs = raw_data(input_layout),
-    }
-
-    target_blend_desc := d3d12.RENDER_TARGET_BLEND_DESC {
-        BlendEnable = w32.FALSE,
-        LogicOpEnable = w32.FALSE,
-        SrcBlend = .ONE,
-        DestBlend = .ZERO,
-        BlendOp = .ADD,
-        SrcBlendAlpha = .ONE,
-        DestBlendAlpha = .ZERO,
-        BlendOpAlpha = .ADD,
-        LogicOp = .NOOP,
-        RenderTargetWriteMask = 0xf,
-    }
-
-    pipeline_desc := d3d12.GRAPHICS_PIPELINE_STATE_DESC{
-        InputLayout = input_layout_desc,
-        VS = renderer.shaders[.Vertex_Passthrough].bytecode,
-        PS = renderer.shaders[.Pixel_Color].bytecode,
-        PrimitiveTopologyType = .TRIANGLE,
-        NumRenderTargets = 1,
-        RTVFormats = {
-            .R8G8B8A8_UNORM,
-            .UNKNOWN,
-            .UNKNOWN,
-            .UNKNOWN,
-            .UNKNOWN,
-            .UNKNOWN,
-            .UNKNOWN,
-            .UNKNOWN,
-        },
-        DSVFormat = .UNKNOWN,
-        SampleMask = max(u32),
-        SampleDesc = {
-            Count = 1,
-            Quality = 0,            
-        },
-        NodeMask = 0,
-        CachedPSO = {},
-        Flags = {},
-        pRootSignature = renderer.root_signature,
-        BlendState = {
-            AlphaToCoverageEnable = w32.FALSE,
-            IndependentBlendEnable = w32.FALSE,
-            RenderTarget = {
-                target_blend_desc,
-                target_blend_desc,
-                target_blend_desc,
-                target_blend_desc,
-                target_blend_desc,
-                target_blend_desc,
-                target_blend_desc,
-                target_blend_desc,
-            }
-        },
-        DepthStencilState = {
-            DepthEnable = w32.FALSE,
-            StencilEnable = w32.FALSE,
-        },
-        RasterizerState = {
-            FillMode = .SOLID,
-            CullMode = .BACK,
-            FrontCounterClockwise = w32.FALSE,
-            DepthBias = d3d12.DEFAULT_DEPTH_BIAS,
-            DepthBiasClamp = d3d12.DEFAULT_DEPTH_BIAS_CLAMP,
-            SlopeScaledDepthBias = d3d12.DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
-            DepthClipEnable = w32.TRUE,
-            MultisampleEnable = w32.FALSE,
-            AntialiasedLineEnable = w32.FALSE,
-            ForcedSampleCount = 0,
-            ConservativeRaster = .OFF,
-        },
-    }
-    renderer.device->CreateGraphicsPipelineState(&pipeline_desc, d3d12.IPipelineState_UUID, (^rawptr)(&renderer.pipeline))
 
     renderer.command_list->Close()
 }
@@ -488,41 +348,25 @@ create_vertex_buffer :: proc(device: ^d3d12.IDevice, n_vertices: int, $T: typeid
     }
 }
 
-global_constant_buffer :: struct #align(16) {
-    projection: matrix[4, 4]f32,
-    view:       matrix[4, 4]f32,
-    resolution: [2]f32,
-    mouse:      [2]f32,
-    last_mouse: [2]f32,
-    time:       f32,
-}
-
-constant_buffer_id :: enum {
-}
-
-constant_buffer_types :: [constant_buffer_id]typeid {
-}
-
-set_constant_buffer :: proc(renderer: ^renderer_context, value: ^$T) {
-    for type, id in constant_buffer_types {
-        if T == type {
-            read_range := d3d12.RANGE{0, 0}
-            mapped_data: rawptr = nil
-            renderer.constant_buffers[id]->Map(0, &read_range, &mapped_data)
-            runtime.mem_copy(mapped_data, value, size_of(T))
-            return
-        }
-    }
-}
-
-set_global_constant_buffer :: proc(renderer: ^renderer_context, value: ^global_constant_buffer) {
-    runtime.mem_copy(renderer.global_mapped[renderer.frame % N_BACK_BUFFERS], value, size_of(global_constant_buffer))
-}
-
 render :: proc(memory: ^game_memory) {
     renderer := &memory.renderer
     frame_index := renderer.frame % N_BACK_BUFFERS
     frame_context := &renderer.frame_context[frame_index]
+
+    // Shader hot-reloading
+    updated: [shader_id]bool
+    for id in shader_id {
+        if id == .None do continue
+        updated[id] = update_if_newer_shader(&renderer.shader_compiler, &renderer.shaders[id])
+    }
+
+    for entry, pipeline_id in shader_pipeline_entries {
+        for stage_id in entry.stage {
+            if updated[stage_id] {
+                initialize_pipeline(pipeline_id, renderer)
+            }
+        }
+    }
 
     if renderer.fence->GetCompletedValue() < frame_context.fence_value {
         renderer.fence->SetEventOnCompletion(renderer.frame, renderer.fence_event)
@@ -576,12 +420,13 @@ render :: proc(memory: ^game_memory) {
         mouse = memory.input.mouse.cursor,
         last_mouse = memory.input.mouse.cursor,
     }
-    set_global_constant_buffer(renderer, &global_cb)
+    // set_global_constant_buffer(renderer, &global_cb)
 
-    renderer.command_list->SetGraphicsRootSignature(renderer.root_signature)
-    renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
+    pipeline := &renderer.shader_pipelines[.test_pipeline]
+    renderer.command_list->SetGraphicsRootSignature(pipeline.root_signature)
+    // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
 
-    renderer.command_list->SetPipelineState(renderer.pipeline)
+    renderer.command_list->SetPipelineState(pipeline.state)
 
     renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
 
