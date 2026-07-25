@@ -142,6 +142,13 @@ log :: proc(level: log_level, message: string) {
     }
 }
 
+assert :: proc(exp: bool, location := #caller_location) {
+    message: string = fmt.tprintf("Assertion failed in procedure `%s` at %s:%d", location.procedure, location.file_path, location.line)
+    message_w := w32.utf8_to_wstring(message)
+    w32.OutputDebugStringW(message_w)
+    log(.Fatal, message)
+}
+
 process_messages :: proc(window: w32.HWND, input: ^input_context) {
     msg: w32.MSG
     for w32.PeekMessageW(&msg, window, 0, 0, w32.PM_REMOVE) {
