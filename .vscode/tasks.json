@@ -7,10 +7,10 @@
             "command": "odin",
             "args": [
                 "build",
-                "platform",
+                "src/platform",
                 "-out:bin/run.exe",
                 "-debug",
-                "-subsystem:windows"
+                "-subsystem:windows",
             ],
             "group": "build",
             "options": {
@@ -26,10 +26,29 @@
             "command": "odin",
             "args": [
                 "build",
-                "game",
+                "src/game",
                 "-build-mode:dll",
                 "-out:bin/game.dll",
-                "-debug"
+                "-debug",
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "close": false
+            }
+        },
+        {
+            "label": "compile_tests",
+            "type": "shell",
+            "command": "odin",
+            "args": [
+                "build",
+                "src/test",
+                "-out:bin/test.exe",
+                "-build-mode:test",
+                "-debug",
             ],
             "group": "build",
             "options": {
@@ -45,7 +64,7 @@
             "command": "odin",
             "args": [
                 "run",
-                "build",
+                "src/build",
                 "-out:bin/hot.exe"
             ],
             "group": "build",
@@ -58,7 +77,7 @@
         },
         {
             "label": "build",
-            "dependsOn": ["compile_platform", "compile_game"],
+            "dependsOn": ["compile_platform", "compile_game", "compile_tests"],
             "dependsOrder": "parallel"
         }
     ]

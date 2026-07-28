@@ -1,4 +1,4 @@
-package main
+package common
 
 import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
@@ -7,6 +7,7 @@ import "core:math"
 import "core:mem"
 import "core:os"
 import "base:runtime"
+import "core:log"
 
 
 when ODIN_OS == .Windows {
@@ -14,16 +15,13 @@ when ODIN_OS == .Windows {
 N_BACK_BUFFERS  :: 3
 N_DEPTH_BUFFERS :: 1
 
-d3d12_frame_context :: struct {
+D3D12_Frame_Context :: struct {
     command_alloc: ^d3d12.ICommandAllocator,
     fence_value:   u64,
 }
 
-renderer_context :: struct {
+Renderer_Context :: struct {
     frame:               u64,
-    width:               u32,
-    height:              u32,
-    camera:              game_camera,
     window:              w32.HWND,
     device:              ^d3d12.IDevice,
     fence:               ^d3d12.IFence,
@@ -31,7 +29,7 @@ renderer_context :: struct {
     swap_chain:          ^dxgi.ISwapChain1,
     command_queue:       ^d3d12.ICommandQueue,
     command_list:        ^d3d12.IGraphicsCommandList,
-    frame_context:       [N_BACK_BUFFERS]d3d12_frame_context,
+    frame_context:       [N_BACK_BUFFERS]D3D12_Frame_Context,
     rtv_heap:            ^d3d12.IDescriptorHeap,
     dsv_heap:            ^d3d12.IDescriptorHeap,
     rtv_descriptor_size: u32,
@@ -42,12 +40,12 @@ renderer_context :: struct {
     attribute_buffer:    d3d12.VERTEX_BUFFER_VIEW,
     shader_compiler:     dxc_compiler,
     shaders:             [shader_id]dxc_shader,
-    shader_pipelines:    [shader_pipeline_id]shader_pipeline,
+    shader_pipelines:    [Shader_Pipeline_Id]shader_pipeline,
     global_buffers:      [N_BACK_BUFFERS]^d3d12.IResource,
     global_mapped:       [N_BACK_BUFFERS]rawptr,
 }
 
-initialize_renderer :: proc(renderer: ^renderer_context) {
+initialize_renderer :: proc(renderer: ^Renderer_Context, width: u32, height: u32) {
     hr: w32.HRESULT
     renderer.window = w32.GetActiveWindow()
 
@@ -69,7 +67,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
 
     hr = dxgi.CreateDXGIFactory2(flags, dxgi.IFactory4_UUID, (^rawptr)(&factory))
     if hr < 0 {
-        log(.Fatal, "Failed to create DXGI Factory.")
+        log.fatal("Failed to create DXGI Factory.")
     }
     defer factory->Release()
 
@@ -94,13 +92,13 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
     }
 
     if adapter == nil {
-        log(.Fatal, "No D3D12-capable hardware adapter found")
+        log.fatal("No D3D12-capable hardware adapter found")
     }
     defer adapter->Release()
 
 	hr = d3d12.CreateDevice((^dxgi.IUnknown)(adapter), ._12_0, d3d12.IDevice_UUID, (^rawptr)(&renderer.device))
 	if hr < 0 {
-		log(.Fatal, "Failed to create D3D12 device")
+		log.fatal("Failed to create D3D12 device")
 	}
 
     renderer.device->CreateFence(0, {}, d3d12.IFence_UUID, (^rawptr)(&renderer.fence))
@@ -112,7 +110,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
         (^rawptr)(&renderer.command_queue)
     )
     if hr < 0 {
-        log(.Fatal, "Failed to create D3D12 command queue")
+        log.fatal("Failed to create D3D12 command queue")
     }
 
     for &frame in renderer.frame_context {
@@ -122,7 +120,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
             (^rawptr)(&frame.command_alloc)
         )
         if hr < 0 {
-            log(.Fatal, "Failed to create D3D12 command allocator")
+            log.fatal("Failed to create D3D12 command allocator")
         }
     }
     
@@ -135,12 +133,12 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
         (^rawptr)(&renderer.command_list)
     )
     if hr < 0 {
-        log(.Fatal, "Failed to create D3D12 command list")
+        log.fatal("Failed to create D3D12 command list")
     }
 
     swap_chain_desc := dxgi.SWAP_CHAIN_DESC1{
-        Width = renderer.width,
-        Height = renderer.height,
+        Width = width,
+        Height = height,
         Format = .R8G8B8A8_UNORM,
         Stereo = false,
         SampleDesc = {
@@ -157,7 +155,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
 
     hr = factory->CreateSwapChainForHwnd(renderer.command_queue, renderer.window, &swap_chain_desc, nil, nil, &renderer.swap_chain)
     if hr < 0 {
-        log(.Fatal, "Failed to create DXGI swap chain")
+        log.fatal("Failed to create DXGI swap chain")
     }
 
     output: ^dxgi.IOutput
@@ -186,7 +184,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
         (^rawptr)(&renderer.rtv_heap)
     )
     if hr < 0 {
-        log(.Fatal, "Failed to create RTV descriptor heap")
+        log.fatal("Failed to create RTV descriptor heap")
     }
     renderer.rtv_descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.RTV)
 
@@ -201,7 +199,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
         (^rawptr)(&renderer.dsv_heap)
     )
     if hr < 0 {
-        log(.Fatal, "Failed to create DSV descriptor heap")
+        log.fatal("Failed to create DSV descriptor heap")
     }
     renderer.dsv_descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.DSV)
 
@@ -211,7 +209,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
     for i in 0..<N_BACK_BUFFERS {
         hr = renderer.swap_chain->GetBuffer(u32(i), d3d12.IResource_UUID, (^rawptr)(&renderer.render_targets[i]))
         if hr < 0 {
-            log(.Fatal, "Failed to get swap chain buffers")
+            log.fatal("Failed to get swap chain buffers")
         }
         renderer.device->CreateRenderTargetView(renderer.render_targets[i], nil, rtv_handle)
         rtv_handle.ptr += uint(renderer.rtv_descriptor_size)
@@ -223,8 +221,8 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
         resource_desc := d3d12.RESOURCE_DESC{
             Dimension = .TEXTURE2D,
             Alignment = 0,
-            Width = u64(renderer.width),
-            Height = renderer.height,
+            Width = u64(width),
+            Height = height,
             DepthOrArraySize = 1,
             MipLevels = 1,
             Format = .D24_UNORM_S8_UINT,
@@ -255,7 +253,7 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
             (^rawptr)(&renderer.depth_stencils[i])
         )
         if hr < 0 {
-            log(.Fatal, "Failed to create depth stencil buffer")
+            log.fatal("Failed to create depth stencil buffer")
         }
 
         renderer.device->CreateDepthStencilView(renderer.depth_stencils[i], nil, dsv_handle)
@@ -263,12 +261,12 @@ initialize_renderer :: proc(renderer: ^renderer_context) {
     }
 
     // Vertex buffers
-    renderer.position_buffer = create_vertex_buffer(renderer.device, 3, vertex_position, &triangle_positions)
-    renderer.attribute_buffer = create_vertex_buffer(renderer.device, 3, vertex_attributes, &triangle_attributes)
+    renderer.position_buffer = create_vertex_buffer(renderer.device, 3, Vertex_Position, &triangle_positions)
+    renderer.attribute_buffer = create_vertex_buffer(renderer.device, 3, Vertex_Attributes, &triangle_attributes)
 
     // Constant buffers
     for i in 0..<N_BACK_BUFFERS {
-        size := mem.align_forward_int(size_of(global_constant_buffer), 256)
+        size := mem.align_forward_int(size_of(Global_Constant_Buffer), 256)
         renderer.global_buffers[i] = create_buffer(renderer.device, size)
         read_range := d3d12.RANGE{0, 0}
         renderer.global_buffers[i]->Map(0, &read_range, &renderer.global_mapped[i])
@@ -320,7 +318,7 @@ create_buffer :: proc(device: ^d3d12.IDevice, size: int, memory: rawptr = nil) -
     upload_buffer: ^d3d12.IResource
     hr := device->CreateCommittedResource(&properties, {}, &resource_desc, d3d12.RESOURCE_STATE_GENERIC_READ, nil, d3d12.IResource_UUID, (^rawptr)(&upload_buffer))
     if hr < 0 {
-        log(.Fatal, "Failed to create D3D12 generic buffer")
+        log.fatal("Failed to create D3D12 generic buffer")
     }
 
     if memory != nil {
@@ -329,7 +327,7 @@ create_buffer :: proc(device: ^d3d12.IDevice, size: int, memory: rawptr = nil) -
 
         hr = upload_buffer->Map(0, &read_range, &mapped_data)
         if hr < 0 {
-            log(.Fatal, "Failed to map D3D12 generic buffer")
+            log.fatal("Failed to map D3D12 generic buffer")
         }
         runtime.mem_copy(mapped_data, memory, size)
         upload_buffer->Unmap(0, nil)
@@ -348,8 +346,9 @@ create_vertex_buffer :: proc(device: ^d3d12.IDevice, n_vertices: int, $T: typeid
     }
 }
 
-render :: proc(memory: ^game_memory) {
+render :: proc(memory: ^Game_Memory) {
     renderer := &memory.renderer
+    group := &memory.render_group
     frame_index := renderer.frame % N_BACK_BUFFERS
     frame_context := &renderer.frame_context[frame_index]
 
@@ -379,8 +378,8 @@ render :: proc(memory: ^game_memory) {
     viewport := d3d12.VIEWPORT{
         TopLeftX = 0.0,
         TopLeftY = 0.0,
-        Width = f32(renderer.width),
-        Height = f32(renderer.height),
+        Width = f32(group.width),
+        Height = f32(group.height),
         MinDepth = 0.0,
         MaxDepth = 1.0
     }
@@ -389,8 +388,8 @@ render :: proc(memory: ^game_memory) {
     scissor_rect :=  d3d12.RECT{
         left = 0,
         top = 0,
-        right = i32(renderer.width),
-        bottom = i32(renderer.height),
+        right = i32(group.width),
+        bottom = i32(group.height),
     }
     renderer.command_list->RSSetScissorRects(1, &scissor_rect)
 
@@ -415,14 +414,14 @@ render :: proc(memory: ^game_memory) {
     renderer.dsv_heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
 
     // Global constant buffer
-    global_cb := global_constant_buffer{
-        resolution = {f32(renderer.width), f32(renderer.height)},
+    global_cb := Global_Constant_Buffer{
+        resolution = {f32(group.width), f32(group.height)},
         mouse = memory.input.mouse.cursor,
         last_mouse = memory.input.mouse.cursor,
     }
     // set_global_constant_buffer(renderer, &global_cb)
 
-    pipeline := &renderer.shader_pipelines[.test_pipeline]
+    pipeline := &renderer.shader_pipelines[.Test_Pipeline]
     renderer.command_list->SetGraphicsRootSignature(pipeline.root_signature)
     // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
 
@@ -462,7 +461,7 @@ render :: proc(memory: ^game_memory) {
 
     hr := renderer.command_queue->Signal(renderer.fence, renderer.frame)
     if hr < 0 {
-        log(.Fatal, "Failed to signal fence")
+        log.fatal("Failed to signal fence")
     }
 }
 

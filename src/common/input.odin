@@ -1,35 +1,35 @@
-package main
+package common
 
 
-input_mode :: enum {
+Input_Mode :: enum {
     Keyboard,
     Controller,
 }
 
-button_state :: struct {
+Button_State :: struct {
     is_down: bool,
     was_down: bool,
     just_pressed: bool,
     just_lifted: bool,
 }
 
-reset_button_state :: proc(button: ^button_state) {
+reset_button_state :: proc(button: ^Button_State) {
     button.was_down = button.is_down
     button.just_pressed = false
     button.just_lifted = false
 }
 
-press_button :: proc(button: ^button_state) {
+press_button :: proc(button: ^Button_State) {
     button.is_down = true
     button.just_pressed = !button.was_down
 }
 
-lift_button :: proc(button: ^button_state) {
+lift_button :: proc(button: ^Button_State) {
     button.is_down = false
     button.just_lifted = button.was_down
 }
 
-keyboard_key :: enum {
+Keyboard_Key :: enum {
     One, Two, Three, Four, Five, Six, Seven, Eight, Nine, Zero,
     Q, W, E, R, T, Y, U, I, O, P,
       A, S, D, F, G, H, J, K, L,
@@ -42,7 +42,7 @@ keyboard_key :: enum {
     Control,
     Alt,
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
-    PageUp, PageDown,
+    Page_Up, Page_Down,
 }
 
 controller_key :: enum {
@@ -54,16 +54,16 @@ controller_key :: enum {
     Back,
 }
 
-input_context :: struct {
-    mode: input_mode,
+Input_Context :: struct {
+    mode: Input_Mode,
     keyboard: struct {
-        key: [keyboard_key]button_state,
+        key: [Keyboard_Key]Button_State,
         some_down: bool,
     },
     mouse: struct {
-        left_click: button_state,
-        middle_click: button_state,
-        right_click: button_state,
+        left_click: Button_State,
+        middle_click: Button_State,
+        right_click: Button_State,
         cursor: [2]f32,
         last_cursor: [2]f32,
         wheel: i16,
@@ -72,18 +72,18 @@ input_context :: struct {
     controller: struct {
         left_stick: [2]f32,
         right_stick: [2]f32,
-        key: [controller_key]button_state,
+        key: [controller_key]Button_State,
         pad: struct {
-            left: button_state,
-            right: button_state,
-            up: button_state,
-            down: button_state,
+            left: Button_State,
+            right: Button_State,
+            up: Button_State,
+            down: Button_State,
         },
         some_down: bool,
     },
 }
 
-reset_input :: proc(input: ^input_context) {
+reset_input :: proc(input: ^Input_Context) {
     for &button, key in input.keyboard.key {
         reset_button_state(&button)
     }

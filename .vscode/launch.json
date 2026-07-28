@@ -23,5 +23,16 @@
             "environment": [],
             "console": "internalConsole"
         },
+        {
+            "name": "(Windows) Test",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "bin/test.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": "internalConsole"
+        }
     ]
 }
