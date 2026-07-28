@@ -71,9 +71,6 @@ update_if_newer_code :: proc(memory: ^Game_Memory) {
         ok := dynlib.unload_library(code.library)
         if !ok do log.fatal("Failed to unload game code library")
 
-        matches: []string
-        matches, error = os.glob("bin/game*.pdb")
-
         load_code(code)
         log.info("Code has been reloaded")
         code.reload(memory)

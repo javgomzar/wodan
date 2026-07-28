@@ -5,35 +5,34 @@ import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import w32 "core:sys/windows"
 import "core:path/filepath"
-import "core:fmt"
 import "core:os"
 import "core:time"
-import "core:reflect"
 import "base:runtime"
 import "core:log"
+import "core:strings"
 
 
-shader_type :: enum {
-    vertex,
-    domain,
-    hull,
-    geometry,
-    pixel,
-    compute,
-    library,
+Shader_Type :: enum {
+    Vertex,
+    Domain,
+    Hull,
+    Geometry,
+    Pixel,
+    Compute,
+    Library,
 }
 
-shader_target := [shader_type]w32.wstring {
-    .vertex =   "vs_6_0",
-    .domain =   "ds_6_0",
-    .hull =     "hs_6_0",
-    .geometry = "gs_6_0",
-    .pixel =    "ps_6_0",
-    .compute =  "cs_6_0",
-    .library =  "lib_6_0",
+shader_target := [Shader_Type]w32.wstring {
+    .Vertex =   "vs_6_0",
+    .Domain =   "ds_6_0",
+    .Hull =     "hs_6_0",
+    .Geometry = "gs_6_0",
+    .Pixel =    "ps_6_0",
+    .Compute =  "cs_6_0",
+    .Library =  "lib_6_0",
 }
 
-shader_id :: enum {
+Shader_Id :: enum {
     None,
     Vertex_Screen,
     Vertex_Passthrough,
@@ -41,34 +40,37 @@ shader_id :: enum {
     Pixel_Color,
 }
 
-shader_paths := [shader_id]string {
-    .None =               "",
-    .Vertex_Screen =      "file/shader/HLSL/vertex/screen.vsh",
-    .Vertex_Passthrough = "file/shader/HLSL/vertex/passthrough.vsh",
-    .Vertex_Mesh =        "file/shader/HLSL/vertex/mesh.vsh",
-    .Pixel_Color =        "file/shader/HLSL/pixel/color.psh",
+get_shader_path :: proc(id: Shader_Id) -> string {
+    switch id {
+        case .None:               return ""
+        case .Vertex_Screen:      return "file/shader/HLSL/vertex/screen.vsh"
+        case .Vertex_Passthrough: return "file/shader/HLSL/vertex/passthrough.vsh"
+        case .Vertex_Mesh:        return "file/shader/HLSL/vertex/mesh.vsh"
+        case .Pixel_Color:        return "file/shader/HLSL/pixel/color.psh"
+    }
+    return ""
 }
 
 Shader_Pipeline_Id :: enum {
     Test_Pipeline,
 }
 
-shader_pipeline_entry :: struct {
+Shader_Pipeline_Entry :: struct {
     primitive:      d3d12.PRIMITIVE_TOPOLOGY_TYPE,
-    stage:          [shader_type]shader_id,
+    stage:          [Shader_Type]Shader_Id,
 }
 
-shader_pipeline_entries := [Shader_Pipeline_Id]shader_pipeline_entry {
+shader_pipeline_entries := [Shader_Pipeline_Id]Shader_Pipeline_Entry {
     .Test_Pipeline = {
         primitive = .TRIANGLE,
         stage = {
-            .vertex =   .Vertex_Passthrough,
-            .domain =   .None,
-            .hull =     .None,
-            .geometry = .None,
-            .pixel =    .Pixel_Color,
-            .compute =  .None,
-            .library =  .None,
+            .Vertex =   .Vertex_Passthrough,
+            .Domain =   .None,
+            .Hull =     .None,
+            .Geometry = .None,
+            .Pixel =    .Pixel_Color,
+            .Compute =  .None,
+            .Library =  .None,
         },
     }
 }
@@ -115,9 +117,9 @@ shader_pipeline :: struct {
 }
 
 dxc_shader :: struct {
-    id:                shader_id,
+    id:                Shader_Id,
     path:              string,
-    type:              shader_type,
+    type:              Shader_Type,
     last_modification: time.Time,
     reflection:        ^d3d12.IShaderReflection,
     layout:            d3d12.INPUT_LAYOUT_DESC,
@@ -142,29 +144,29 @@ initialize_shader_compiler :: proc(compiler: ^dxc_compiler) {
     if hr < 0 do log.fatal("Failed to create DirectX compiler include handler")
 }
 
-initialize_shader :: proc(id: shader_id, shader_list: ^[shader_id]dxc_shader) {
+initialize_shader :: proc(id: Shader_Id, shader_list: ^[Shader_Id]dxc_shader) {
     shader := &shader_list[id]
     shader.id = id
-    shader.path = shader_paths[id]
+    shader.path = strings.clone(get_shader_path(id))
     error: os.Error
     shader.last_modification, error = os.modification_time_by_path(shader.path)
     if error != nil do log.error("Failed to check modification time for file", shader.path)
     extension := filepath.ext(shader.path)
     switch extension {
         case ".vsh":
-            shader.type = .vertex
+            shader.type = .Vertex
         case ".dsh":
-            shader.type = .domain
+            shader.type = .Domain
         case ".hsh":
-            shader.type = .hull
+            shader.type = .Hull
         case ".gsh":
-            shader.type = .geometry
+            shader.type = .Geometry
         case ".psh":
-            shader.type = .pixel
+            shader.type = .Pixel
         case ".csh":
-            shader.type = .compute
+            shader.type = .Compute
         case ".libsh":
-            shader.type = .library
+            shader.type = .Library
         case:
             log.fatal("Invalid file extension '.", extension, "' for shader", sep = "")
     }
@@ -360,7 +362,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context)
     pipeline := &renderer.shader_pipelines[id]
     
     shader_desc: d3d12.SHADER_DESC
-    vertex_shader := &renderer.shaders[entry.stage[.vertex]]
+    vertex_shader := &renderer.shaders[entry.stage[.Vertex]]
     vertex_shader.reflection->GetDesc(&shader_desc)
     
     input_elements: [8]d3d12.INPUT_ELEMENT_DESC
@@ -411,7 +413,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context)
     if hr < 0 do log.fatal("Failed to create D3D12 root signature")
     defer signature_blob->Release()
 
-    pixel_shader := &renderer.shaders[entry.stage[.pixel]]
+    pixel_shader := &renderer.shaders[entry.stage[.Pixel]]
     pipeline_desc := d3d12.GRAPHICS_PIPELINE_STATE_DESC{
         InputLayout = input_layout,
         PrimitiveTopologyType = entry.primitive,

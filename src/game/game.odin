@@ -1,5 +1,6 @@
 package game
 
+import "core:log"
 import "../common"
 
 @(export)
@@ -16,6 +17,7 @@ reload_game_state :: proc(memory: ^common.Game_Memory) {
 @(export)
 update_game_state :: proc(memory: ^common.Game_Memory) {
     // Main game loop
+    log.info("HOAT")
     
     common.render(memory)
 }

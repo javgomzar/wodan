@@ -5,7 +5,6 @@ import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import "core:math"
 import "core:mem"
-import "core:os"
 import "base:runtime"
 import "core:log"
 
@@ -39,7 +38,7 @@ Renderer_Context :: struct {
     position_buffer:     d3d12.VERTEX_BUFFER_VIEW,
     attribute_buffer:    d3d12.VERTEX_BUFFER_VIEW,
     shader_compiler:     dxc_compiler,
-    shaders:             [shader_id]dxc_shader,
+    shaders:             [Shader_Id]dxc_shader,
     shader_pipelines:    [Shader_Pipeline_Id]shader_pipeline,
     global_buffers:      [N_BACK_BUFFERS]^d3d12.IResource,
     global_mapped:       [N_BACK_BUFFERS]rawptr,
@@ -275,7 +274,7 @@ initialize_renderer :: proc(renderer: ^Renderer_Context, width: u32, height: u32
     // Shaders
     initialize_shader_compiler(&renderer.shader_compiler)
 
-    for id in shader_id {
+    for id in Shader_Id {
         if id == .None do continue
         initialize_shader(id, &renderer.shaders)
         compile_shader(&renderer.shader_compiler, &renderer.shaders[id])
@@ -353,8 +352,8 @@ render :: proc(memory: ^Game_Memory) {
     frame_context := &renderer.frame_context[frame_index]
 
     // Shader hot-reloading
-    updated: [shader_id]bool
-    for id in shader_id {
+    updated: [Shader_Id]bool
+    for id in Shader_Id {
         if id == .None do continue
         updated[id] = update_if_newer_shader(&renderer.shader_compiler, &renderer.shaders[id])
     }
