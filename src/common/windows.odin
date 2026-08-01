@@ -9,8 +9,6 @@ import "../common"
 
 when ODIN_OS == .Windows {
 
-EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
-
 performance_frequency: w32.LARGE_INTEGER
 
 get_wall_clock :: proc() -> u64 {

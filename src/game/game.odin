@@ -17,10 +17,6 @@ reload_game_state :: proc(memory: ^common.Game_Memory) {
 @(export)
 update_game_state :: proc(memory: ^common.Game_Memory) {
     // Main game loop
-
-    test_asset := &memory.asset_manager.assets[1]
-    mesh := test_asset.meshes[0]
-    primitive := mesh.primitives[0]
     
     common.render(memory)
 }

@@ -44,6 +44,8 @@ Renderer_Context :: struct {
     global_mapped:       [N_BACK_BUFFERS]rawptr,
 }
 
+EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
+
 initialize_renderer :: proc(renderer: ^Renderer_Context, width: u32, height: u32) {
     hr: w32.HRESULT
     renderer.window = w32.GetActiveWindow()
@@ -348,6 +350,7 @@ create_vertex_buffer :: proc(device: ^d3d12.IDevice, n_vertices: int, $T: typeid
 render :: proc(memory: ^Game_Memory) {
     renderer := &memory.renderer
     group := &memory.render_group
+    input := &memory.input
     frame_index := renderer.frame % N_BACK_BUFFERS
     frame_context := &renderer.frame_context[frame_index]
 
@@ -415,8 +418,8 @@ render :: proc(memory: ^Game_Memory) {
     // Global constant buffer
     global_cb := Global_Constant_Buffer{
         resolution = {f32(group.width), f32(group.height)},
-        mouse = memory.input.mouse.cursor,
-        last_mouse = memory.input.mouse.cursor,
+        mouse = input.mouse.cursor,
+        last_mouse = input.mouse.cursor,
     }
     // set_global_constant_buffer(renderer, &global_cb)
 
