@@ -7,7 +7,7 @@ import "core:mem"
 import "core:log"
 
 
-Primitive :: enum int {
+Primitive :: enum u32 {
     Point =          0,
     Lines =          1,
     Line_Loop =      2,

@@ -101,6 +101,10 @@ game_log :: proc(data: rawptr, level: log.Level, text: string, options: log.Opti
 
     wline_break := w32.utf8_to_wstring("\n")
     result = w32.WriteConsoleW(log_data.console, rawptr(wline_break), 1, nil, nil)
+
+    if level == .Fatal {
+        os.exit(1)
+    }
 }
 
 // assert :: proc(exp: bool, location := #caller_location) {
