@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:log"
+import "core:mem"
 import "../common"
 import w32 "core:sys/windows"
 
@@ -67,6 +68,22 @@ create_window :: proc(width: u32, height: u32) -> w32.HWND {
 }
 
 main :: proc() {
+    when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
+
+		defer {
+			if len(track.allocation_map) > 0 {
+				fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+				for _, entry in track.allocation_map {
+					fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+				}
+			}
+			mem.tracking_allocator_destroy(&track)
+		}
+	}
+
     memory.time = 0
     code := &memory.code
     input := &memory.input
