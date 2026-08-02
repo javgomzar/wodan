@@ -105,16 +105,6 @@ game_log :: proc(data: rawptr, level: log.Level, text: string, options: log.Opti
     }
 }
 
-// assert :: proc(exp: bool, location := #caller_location) {
-//     when ODIN_DEBUG {
-//         if !exp {
-//             message: string = fmt.tprintf("Assertion failed in procedure `%s` at %s:%d", location.procedure, location.file_path, location.line)
-//             message_w := w32.utf8_to_wstring(message)
-//             w32.OutputDebugStringW(message_w)
-//         }
-//     }
-// }
-
 process_messages :: proc(window: w32.HWND, input: ^common.Input_Context) {
     pointer: w32.POINT
     w32.GetCursorPos(&pointer)
