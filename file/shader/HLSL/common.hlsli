@@ -1,26 +1,34 @@
 #ifndef COMMON_HLSLI
 #define COMMON_HLSLI
 
+static const float PI = 3.14159265359f;
+
 cbuffer Globals: register(b0) {
-    float4x4 Projection;
-    float4x4 View;
-    float2 Resolution;
-    float2 Mouse;
-    float2 LastMouse;
-    float Time;
+    float4x4 projection;
+    float4x4 view;
+    float2 resolution;
+    float2 mouse;
+    float2 last_mouse;
+    float time;
 };
 
-cbuffer Transforms: register(b1) {
-    float4x4 Model;
-    float4x4 Normal;
+cbuffer Light: register(b1) {
+	float3 light_direction;
+	float3 light_color;
+	float3 camera_position;
+	float ambient;
+	float diffuse;
 };
 
-cbuffer Light: register(b2) {
-	float3 LightDirection;
-	float3 LightColor;
-	float3 CameraPosition;
-	float Ambient;
-	float Diffuse;
+cbuffer Material: register(b2) {
+    float4 material_color;
+    float metallic;
+    float roughness;
+}
+
+cbuffer Transforms: register(b3) {
+    float4x4 transform_model;
+    float4x4 transform_normal;
 };
 
 #endif

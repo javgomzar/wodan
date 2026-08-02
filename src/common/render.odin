@@ -24,6 +24,14 @@ Camera :: struct {
     distance: f32,
 }
 
+radial_vector :: proc(angle: f32, pitch: f32) -> [3]f32 {
+    cosA := math.cos(angle * math.RAD_PER_DEG);
+    sinA := math.sin(angle * math.RAD_PER_DEG);
+    cosP := math.cos(pitch * math.RAD_PER_DEG);
+    sinP := math.sin(pitch * math.RAD_PER_DEG);
+    return { sinA * cosP, sinP, cosA * cosP }
+}
+
 get_camera_basis :: proc(angle: f32, pitch: f32) -> matrix[3, 3]f32 {
     cosA := math.cos(angle * math.RAD_PER_DEG)
     sinA := math.sin(angle * math.RAD_PER_DEG)
@@ -61,6 +69,13 @@ get_projection_matrix :: proc(Width: f32, Height: f32) -> matrix[4, 4]f32 {
     }
 }
 
+Render_Light :: struct {
+    direction:        [3]f32,
+    color:            [3]f32,
+    ambient:          f32,
+    diffuse:          f32,
+}
+
 Sort_Key :: distinct f32
 
 Render_Entry_Type :: enum {
@@ -79,6 +94,7 @@ Render_Entry :: struct {
     index_offset:     int,
     index_count:      int,
     pipeline:         Shader_Pipeline_Id,
+    material:         ^Game_Material,
     color:            [4]f32,
 }
 
@@ -87,6 +103,7 @@ Render_Group :: struct {
     height:   u32,
     arena:    virtual.Arena,
     camera:   Camera,
+    light:    Render_Light,
     commands: [dynamic]Render_Entry,
 }
 
@@ -100,6 +117,13 @@ initialize_render_group :: proc(group: ^Render_Group, width: u32, height: u32) {
     group.camera.angle = 45.0
     group.camera.pitch = 45.0
     group.camera.distance = 10.0
+
+    group.light = {
+        color = { 1.0, 1.0, 1.0, },
+        direction = linalg.normalize([3]f32{ -0.5, -1, 1 }),
+        ambient = 0.5,
+        diffuse = 0.5,
+    }
 }
 
 add_entry :: proc(group: ^Render_Group, entry: Render_Entry) -> ^Render_Entry {
@@ -113,14 +137,15 @@ push_clear :: proc(group: ^Render_Group, color: [3]f32) {
 }
 
 push_mesh :: proc(
-    group:   ^Render_Group,
-    mesh:    ^Game_Mesh,
-    color:   [4]f32 = {1.0, 1.0, 1.0, 1.0},
-    outline: bool = false,
+    group:    ^Render_Group,
+    mesh:     ^Game_Mesh,
+    material: ^Game_Material,
+    outline:  bool = false,
 ) {
     for primitive in mesh.primitives {
         add_entry(group, {
             type = .Mesh,
+            material = material,
             primitive = primitive.topology,
             pipeline = .Mesh_Pipeline,
             index_count = len(primitive.indices),

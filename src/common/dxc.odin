@@ -37,6 +37,7 @@ Shader_Id :: enum {
     Vertex_Passthrough,
     Vertex_Mesh,
     Pixel_Color,
+    Pixel_Mesh,
 }
 
 get_shader_path :: proc(id: Shader_Id) -> string {
@@ -46,6 +47,7 @@ get_shader_path :: proc(id: Shader_Id) -> string {
         case .Vertex_Passthrough: return "file/shader/HLSL/vertex/passthrough.vsh"
         case .Vertex_Mesh:        return "file/shader/HLSL/vertex/mesh.vsh"
         case .Pixel_Color:        return "file/shader/HLSL/pixel/color.psh"
+        case .Pixel_Mesh:         return "file/shader/HLSL/pixel/mesh.psh"
     }
     return ""
 }
@@ -80,7 +82,7 @@ shader_pipeline_entries := [Shader_Pipeline_Id]Shader_Pipeline_Entry {
             .Domain =   .None,
             .Hull =     .None,
             .Geometry = .None,
-            .Pixel =    .Pixel_Color,
+            .Pixel =    .Pixel_Mesh,
             .Compute =  .None,
             .Library =  .None,
         },
@@ -102,26 +104,39 @@ Global_Constant_Buffer :: struct #align(16) {
     time:       f32,
 }
 
+Light_Constant_Buffer :: struct #align(16) {
+    direction:        [3]f32,
+    pad0:             f32,
+    color:            [3]f32,
+    pad1:             f32,
+    camera_position:  [3]f32,
+    ambient:          f32,
+    diffuse:          f32,
+}
+
 Transform_Constant_Buffer :: struct #align(16) {
     transform: matrix[4, 4]f32,
     normal:    matrix[4, 4]f32,
 }
 
-// Light_Constant_Buffer :: struct #align(16) {
-//     direction: [3]f32,
-//     color:     []
-// }
+Material_Constant_Buffer :: struct #align(16) {
+    color: [4]f32,
+    metallicity: f32,
+    roughness: f32,
+}
 
 Constant_Buffer_Id :: enum {
     Global,
+    Light,
+    Material,
     Transform,
-    // Light,
 }
 
 constant_buffer_types := [Constant_Buffer_Id]typeid{
     .Global = Global_Constant_Buffer,
+    .Light = Light_Constant_Buffer,
+    .Material = Material_Constant_Buffer,
     .Transform = Transform_Constant_Buffer,
-    // .Light = Light_Constant_Buffer,
 }
 
 set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
@@ -132,11 +147,6 @@ set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
             return
         }
     }
-}
-
-Shader_Pipeline :: struct {
-    root_signature: ^d3d12.IRootSignature,
-    state:          ^d3d12.IPipelineState,
 }
 
 DXC_Shader :: struct {
@@ -283,7 +293,9 @@ update_if_newer_shader :: proc(compiler: ^DXC_Compiler, shader: ^DXC_Shader) -> 
         temp_shader := shader^
         ok := compile_shader(compiler, &temp_shader)
         if ok {
-            shader.blob->Release()
+            if shader.blob != nil {
+                shader.blob->Release()
+            }
             shader^ = temp_shader
 
             log.info("Shader", shader.id, "hot-reloaded")
@@ -356,30 +368,40 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
     }
 }
 
-// build_root_signature :: proc(renderer: ^renderer_context) {
-//     shader_desc: d3d12.SHADER_DESC
-//     for shader, id in renderer.shaders {
-//         if id == .None do continue
-//         shader.reflection->GetDesc(&shader_desc)
-//         if shader_desc.ConstantBuffers > 0 {
-//             for i in 0..<shader_desc.ConstantBuffers {
-//                 cb_reflection := shader.reflection->GetConstantBufferByIndex(i)
-//                 cb_desc: d3d12.SHADER_BUFFER_DESC
-//                 cb_reflection->GetDesc(&cb_desc)
+create_root_signature :: proc(renderer: ^Renderer_Context) {
+    #assert(len(Constant_Buffer_Id) == 4)
+    root_params: [4]d3d12.ROOT_PARAMETER
 
-//                 cb_desc.
+    for &param, id in root_params {
+        param = {
+            ParameterType = .CBV,
+            Descriptor = {
+                RegisterSpace = 0,
+                ShaderRegister = u32(id),
+            },
+            ShaderVisibility = .ALL,
+        }
+    }
 
-//                 cb_type := constant_buffer_types[i]
-//                 assert(cb_desc.Variables == reflect.struct_field_count(cb_type))
+    root_signature_desc := d3d12.ROOT_SIGNATURE_DESC{
+        NumParameters = len(root_params),
+        pParameters = &root_params[0],
+        Flags = {.ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT},
+    }
 
-//                 for j in cb_desc.Variables {
-//                     var := cb_reflection->GetVariableByIndex(j)
-//                     var.
-//                 }
-//             }
-//         }
-//     }
-// }
+    signature_blob, error: ^d3d12.IBlob
+    hr := d3d12.SerializeRootSignature(&root_signature_desc, ._1, &signature_blob, &error)
+    if hr < 0 do log.fatal("Failed to serialize D3D12 root signature")
+    hr = renderer.device->CreateRootSignature(
+        0, 
+        signature_blob->GetBufferPointer(), 
+        signature_blob->GetBufferSize(), 
+        d3d12.IRootSignature_UUID,
+        (^rawptr)(&renderer.root_signature)
+    )
+    if hr < 0 do log.fatal("Failed to create D3D12 root signature")
+    defer signature_blob->Release()
+}
 
 initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context) {
     entry := shader_pipeline_entries[id]
@@ -400,43 +422,6 @@ initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context)
         pInputElementDescs = raw_data(input_elements[:]),
     }
 
-    root_params: [8]d3d12.ROOT_PARAMETER
-
-    bind_desc: d3d12.SHADER_INPUT_BIND_DESC
-    for i in 0..<shader_desc.BoundResources {
-        hr := vertex_shader.reflection->GetResourceBindingDesc(i, &bind_desc)
-        if hr < 0 do log.fatal("Failed to retrieve the resource binding with index %d", i)
-        if bind_desc.Type == .CBUFFER {
-            root_params[i] = {
-                ParameterType = .CBV,
-                Descriptor = {
-                    RegisterSpace = bind_desc.Space,
-                    ShaderRegister = bind_desc.BindPoint,
-                },
-                ShaderVisibility = .ALL,
-            }
-        }
-    }
-
-    root_signature_desc := d3d12.ROOT_SIGNATURE_DESC{
-        NumParameters = shader_desc.ConstantBuffers,
-        pParameters = raw_data(root_params[:]),
-        Flags = {.ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT},
-    }
-
-    signature_blob, error: ^d3d12.IBlob
-    hr := d3d12.SerializeRootSignature(&root_signature_desc, ._1, &signature_blob, &error)
-    if hr < 0 do log.fatal("Failed to serialize D3D12 root signature")
-    hr = renderer.device->CreateRootSignature(
-        0, 
-        signature_blob->GetBufferPointer(), 
-        signature_blob->GetBufferSize(), 
-        d3d12.IRootSignature_UUID,
-        (^rawptr)(&pipeline.root_signature)
-    )
-    if hr < 0 do log.fatal("Failed to create D3D12 root signature")
-    defer signature_blob->Release()
-
     pixel_shader := &renderer.shaders[entry.stage[.Pixel]]
     pipeline_desc := d3d12.GRAPHICS_PIPELINE_STATE_DESC{
         InputLayout = input_layout,
@@ -446,7 +431,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context)
         SampleMask = max(u32),
         SampleDesc = { Count = 1, Quality = 0, },
         NodeMask = 0,
-        pRootSignature = pipeline.root_signature,
+        pRootSignature = renderer.root_signature,
         BlendState = {
             AlphaToCoverageEnable = w32.FALSE,
             IndependentBlendEnable = w32.FALSE,
@@ -457,7 +442,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context)
         },
         RasterizerState = {
             FillMode = .SOLID,
-            CullMode = .BACK,
+            CullMode = .FRONT,
             FrontCounterClockwise = w32.FALSE,
             DepthBias = d3d12.DEFAULT_DEPTH_BIAS,
             DepthBiasClamp = d3d12.DEFAULT_DEPTH_BIAS_CLAMP,
@@ -486,5 +471,6 @@ initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context)
         RenderTargetWriteMask = 0xf,
     }
 
-    renderer.device->CreateGraphicsPipelineState(&pipeline_desc, d3d12.IPipelineState_UUID, (^rawptr)(&pipeline.state))
+    hr := renderer.device->CreateGraphicsPipelineState(&pipeline_desc, d3d12.IPipelineState_UUID, (^rawptr)(pipeline))
+    if hr < 0 do log.fatal("Failed to create pipeline state")
 }

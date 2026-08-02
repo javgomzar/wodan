@@ -3,7 +3,6 @@ package common
 import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
-import "core:slice"
 import "core:mem"
 import "core:log"
 
@@ -33,10 +32,6 @@ D3D12_get_primitive_topology :: proc(primitive: Primitive) -> d3d12.PRIMITIVE_TO
     return .POINTLIST
 }
 
-constant_buffer_id :: enum {
-    Global
-}
-
 Renderer_Context :: struct {
     frame:               u64,
     window:              w32.HWND,
@@ -56,9 +51,10 @@ Renderer_Context :: struct {
     position_buffer:     ^d3d12.IResource,
     attribute_buffer:    ^d3d12.IResource,
     index_buffer:        ^d3d12.IResource,
+    root_signature:      ^d3d12.IRootSignature,
     shader_compiler:     DXC_Compiler,
     shaders:             [Shader_Id]DXC_Shader,
-    shader_pipelines:    [Shader_Pipeline_Id]Shader_Pipeline,
+    shader_pipelines:    [Shader_Pipeline_Id]^d3d12.IPipelineState,
     constant_buffers:    [N_BACK_BUFFERS][Constant_Buffer_Id]Constant_Buffer,
 }
 
@@ -382,7 +378,8 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
     }
 
     // Pipelines
-    for &pipeline, id in renderer.shader_pipelines {
+    create_root_signature(renderer)
+    for id in Shader_Pipeline_Id {
         initialize_pipeline(id, renderer)
     }
 
@@ -514,6 +511,15 @@ render :: proc(memory: ^Game_Memory) {
     }
     set_constant_buffer(renderer, &global_cb)
 
+    light_cb := Light_Constant_Buffer{
+        direction = group.light.direction,
+        color = group.light.color,
+        camera_position = group.camera.position + group.camera.distance * radial_vector(group.camera.angle, group.camera.pitch),
+        ambient = group.light.ambient,
+        diffuse = group.light.diffuse,
+    }
+    set_constant_buffer(renderer, &light_cb)
+
     transform_cb := Transform_Constant_Buffer{
         transform = 1,
         normal = 1,
@@ -521,6 +527,11 @@ render :: proc(memory: ^Game_Memory) {
     set_constant_buffer(renderer, &transform_cb)
 
     renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
+    renderer.command_list->SetGraphicsRootSignature(renderer.root_signature)
+    global := renderer.constant_buffers[frame_index][.Global]
+    light := renderer.constant_buffers[frame_index][.Light]
+    renderer.command_list->SetGraphicsRootConstantBufferView(0, global.buffer->GetGPUVirtualAddress())
+    renderer.command_list->SetGraphicsRootConstantBufferView(1, light.buffer->GetGPUVirtualAddress())
     
     for entry in group.commands {
         switch entry.type {
@@ -529,19 +540,25 @@ render :: proc(memory: ^Game_Memory) {
                 renderer.command_list->ClearRenderTargetView(rtv_handle, &color, 0, nil)
                 renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
             case .Mesh:
-                pipeline := &renderer.shader_pipelines[entry.pipeline]
-                renderer.command_list->SetGraphicsRootSignature(pipeline.root_signature)
+                pipeline := renderer.shader_pipelines[entry.pipeline]
 
                 #partial switch entry.pipeline {
                     case .Mesh_Pipeline:
-                        global := renderer.constant_buffers[frame_index][.Global]
-                        renderer.command_list->SetGraphicsRootConstantBufferView(0, global.buffer->GetGPUVirtualAddress())
+                        material_cb := Material_Constant_Buffer{
+                            color = entry.material.base_color,
+                            metallicity = entry.material.metallicity,
+                            roughness = entry.material.roughness,
+                        }
+                        set_constant_buffer(renderer, &material_cb)
+                        material := renderer.constant_buffers[frame_index][.Material]
+                        renderer.command_list->SetGraphicsRootConstantBufferView(2, material.buffer->GetGPUVirtualAddress())
+
                         transform := renderer.constant_buffers[frame_index][.Transform]
-                        renderer.command_list->SetGraphicsRootConstantBufferView(1, transform.buffer->GetGPUVirtualAddress())
+                        renderer.command_list->SetGraphicsRootConstantBufferView(3, transform.buffer->GetGPUVirtualAddress())
                 }
 
                 // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
-                renderer.command_list->SetPipelineState(pipeline.state)
+                renderer.command_list->SetPipelineState(pipeline)
                 primitive := D3D12_get_primitive_topology(entry.primitive)
                 renderer.command_list->IASetPrimitiveTopology(primitive)
                 

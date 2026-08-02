@@ -34,7 +34,8 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     update_camera(&render_group.camera, input)
 
     mesh := &asset_manager.assets[1].meshes[0]
-    common.push_mesh(render_group, mesh)
+    material := &asset_manager.assets[1].materials[0]
+    common.push_mesh(render_group, mesh, material)
 
     common.render(memory)
 }

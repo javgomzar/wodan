@@ -1,3 +1,5 @@
+#include "common.hlsli"
+
 struct VS_OUT {
     float4 sv_position: SV_POSITION;
     float3 position: POSITION;
@@ -6,8 +8,41 @@ struct VS_OUT {
     float4 color: COLOR;
 };
 
+float specular_brdf(float alpha_sq, float n_dot_h, float n_dot_l, float n_dot_v) {
+    float D = alpha_sq * step(0, n_dot_h) / (PI * pow(n_dot_h * n_dot_h * (alpha_sq - 1) + 1, 2));
+    float V = step(0, n_dot_h) * step(0, n_dot_v) / (
+        (abs(n_dot_l) + sqrt(alpha_sq + (1 - alpha_sq)*n_dot_l*n_dot_l)) *
+        (abs(n_dot_v) + sqrt(alpha_sq + (1 - alpha_sq)*n_dot_v*n_dot_v))
+    );
+    return V * D;
+}
+
+float conductor_fresnel(float f0, float v_dot_h) {
+    return f0 + (1 - f0) * pow(1 - abs(v_dot_h), 5);
+}
+
 float4 main(VS_OUT vout): SV_TARGET {
-    
-    
-    return ;
+    float3 n = normalize(vout.normal);
+    float3 v = normalize(camera_position - vout.position);
+    // float3 h = normalize(v - light_direction);
+    // float alpha_sq = pow(roughness, 4);
+    float n_dot_l = max(dot(n, -light_direction), 0);
+    // float n_dot_v = dot(n, v);
+    // float n_dot_h = dot(n, h);
+    // float v_dot_h = dot(v, h);
+
+    // float3 F0 = lerp(0.04, material_color.rgb, metallic);
+    // // Schlick's approximation
+    // float3 F = F0 + (1 - F0) * pow(1 - abs(v_dot_h), 5);
+
+    // float3 f_diff = (1 - F) * lerp(material_color.rgb, float3(0, 0, 0), metallic) / PI;
+    // float3 f_spec = F * specular_brdf(alpha_sq, n_dot_h, n_dot_l, n_dot_v);
+
+    float diff = diffuse * n_dot_l;
+    float3 reflection = reflect(light_direction, n);
+    float spec = (1 - roughness) * pow(max(dot(v, reflection), 0), 5);
+
+    float3 result = (ambient + diff) * material_color.rgb + spec * light_color;
+
+    return float4(result, 1.0f);
 }
