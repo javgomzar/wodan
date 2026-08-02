@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:log"
 import "core:mem"
+import "core:slice"
 import "../common"
 import w32 "core:sys/windows"
 
@@ -107,8 +108,6 @@ main :: proc() {
 
     log.debug("Running!")
 
-    common.initialize_asset_manager(&memory.asset_manager)
-
     memory.running = true
     last_counter: u64 = common.get_wall_clock()
     for memory.running {
@@ -121,6 +120,7 @@ main :: proc() {
 
         free_all(context.temp_allocator)
         clear(&common.time_records)
+        clear(&memory.render_group.commands)
 
         end_counter := common.get_wall_clock()
         seconds_elapsed := common.get_seconds_elapsed(last_counter, end_counter)
