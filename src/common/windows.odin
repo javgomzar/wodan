@@ -116,6 +116,13 @@ game_log :: proc(data: rawptr, level: log.Level, text: string, options: log.Opti
 // }
 
 process_messages :: proc(window: w32.HWND, input: ^common.Input_Context) {
+    pointer: w32.POINT
+    w32.GetCursorPos(&pointer)
+    w32.ScreenToClient(window, &pointer)
+    
+    input.mouse.cursor.x = f32(pointer.x)
+    input.mouse.cursor.y = f32(pointer.y)
+    
     msg: w32.MSG
     for w32.PeekMessageW(&msg, window, 0, 0, w32.PM_REMOVE) {
         switch msg.message {
