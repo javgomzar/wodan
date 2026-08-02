@@ -39,10 +39,11 @@ get_serialized_size_slice :: proc(s: $T/[]$E) -> int {
 }
 
 serialize_slice :: proc(memory: []byte, s: $T/[]$E) -> int {
+    block := memory
     size := get_serialized_size_slice(s)
     length := u32(len(s))
-    dump_to_memory(memory, length)
-    copied := copy(memory[4:], slice.to_bytes(s))
+    dump_to_memory(block, length)
+    copied := copy(block[4:size], slice.to_bytes(s))
     assert(copied + 4 == size)
     return size
 }

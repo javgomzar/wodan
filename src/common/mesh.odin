@@ -6,10 +6,13 @@ import "base:runtime"
 
 
 Game_Mesh_Primitive :: struct {
-    topology:   Primitive,
-    indices:    []u32,
-    positions:  []f32,
-    attributes: []f32,
+    topology:         Primitive,
+    indices:          []u32,
+    positions:        []Vertex_Position,
+    attributes:       []Vertex_Attributes,
+    index_offset:     int,
+    position_offset:  int,
+    attribute_offset: int,
 }
 
 Game_Mesh :: struct {
@@ -31,13 +34,20 @@ get_serialized_size_primitive :: proc(primitive: Game_Mesh_Primitive) -> int {
 serialize_primitive :: proc(memory: []byte, primitive: Game_Mesh_Primitive) -> int {
     size := get_serialized_size_primitive(primitive)
 
+    total_bytes_written: int
     dump_to_memory(memory, primitive.topology)
+    total_bytes_written += 4
     block := memory[size_of(primitive.topology):]
     bytes_written := serialize_slice(block, primitive.indices)
+    total_bytes_written += bytes_written
     block = block[bytes_written:]
     bytes_written = serialize_slice(block, primitive.positions)
+    total_bytes_written += bytes_written
     block = block[bytes_written:]
     bytes_written = serialize_slice(block, primitive.attributes)
+    total_bytes_written += bytes_written
+
+    assert(size == total_bytes_written)
     
     return size
 }
@@ -49,10 +59,10 @@ deserialize_primitive :: proc(memory: []byte) -> (Game_Mesh_Primitive, int) {
     result.indices = deserialize_slice(block, []u32)
     indices_size := get_serialized_size_slice(result.indices)
     block = block[indices_size:]
-    result.positions = deserialize_slice(block, []f32)
+    result.positions = deserialize_slice(block, []Vertex_Position)
     positions_size := get_serialized_size_slice(result.positions)
     block = block[positions_size:]
-    result.attributes = deserialize_slice(block, []f32)
+    result.attributes = deserialize_slice(block, []Vertex_Attributes)
     attributes_size := get_serialized_size_slice(result.attributes)
     return result, size_of(Primitive) + indices_size + positions_size + attributes_size
 }
@@ -97,9 +107,9 @@ deserialize_mesh :: proc(memory: []byte) -> (Game_Mesh, int) {
     block = block[4:]
     result.primitives = make([]Game_Mesh_Primitive, n_primitives)
     primitives_size: int
-    for i in 0..<n_primitives {
-        size: int
-        result.primitives[i], size = deserialize_primitive(block)
+    for index in 0..<n_primitives {
+        result_primitive, size := deserialize_primitive(block)
+        result.primitives[index] = result_primitive
         block = block[size:]
         primitives_size += size
     }
