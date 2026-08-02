@@ -105,13 +105,14 @@ get_component_type_id :: proc(component_type: GLTF_Component_Type) -> typeid {
     return nil
 }
 
-GLTF_material :: struct {
+GLTF_Material :: struct {
     name: string,
     pbrMetallicRoughness: struct {
         baseColorFactor: [4]f32,
         metallicFactor:  f32,
         roughnessFactor: f32,
-    }
+    },
+    emissive_factor: [3]f32,
 }
 
 GLTF_Buffer_View :: struct {
@@ -132,6 +133,7 @@ GLTF_Asset :: struct {
     scene:       int,
     scenes:      []GLTF_Scene,
     nodes:       []GLTF_Node,
+    materials:   []GLTF_Material,
     meshes:      []GLTF_Mesh,
     accessors:   []GLTF_Accessor,
     bufferViews: []GLTF_Buffer_View,
@@ -179,7 +181,7 @@ compute_needed_memory_glb :: proc(asset: ^GLTF_Asset) -> int {
             }
 
             positions := asset.accessors[primitive.attributes["POSITION"]]
-            total_size += 4 + positions.count * 3 * size_of(f32)
+            total_size += 4 + positions.count * size_of(Vertex_Position)
 
             attributes: []string = {"NORMAL", "TEXCOORD_0", "COLOR_0"}
             attributes_count: int
@@ -191,8 +193,13 @@ compute_needed_memory_glb :: proc(asset: ^GLTF_Asset) -> int {
                     break
                 }
             }
-            total_size += 4 + attributes_count * 9 * size_of(f32)
+            total_size += 4 + attributes_count * size_of(Vertex_Attributes)
         }
+    }
+
+    for material in asset.materials {
+        total_size += get_serialized_size_string(material.name)
+        total_size += 6 * size_of(f32)
     }
 
     return total_size
@@ -257,30 +264,33 @@ load_glb_asset :: proc(allocator: mem.Allocator, glb_asset: ^GLTF_Asset) {
                 }
 
                 if key == "POSITION" {
-                    game_primitive.positions = make([]f32, 3 * accessor.count)
+                    game_primitive.positions = make([]Vertex_Position, accessor.count)
                     for i in 0..<accessor.count {
                         vector := cast([^]f32)src[i*byte_stride:]
-                        for j in 0..<3 {
-                            game_primitive.positions[3*i + j] = vector[j]
-                        }
+                        game_primitive.positions[i] = { vector[0], vector[1], vector[2] }
                     }
                 }
                 else {
                     if len(game_primitive.attributes) == 0 {
-                        game_primitive.attributes = make([]f32, 9 * accessor.count)
-                    }
-                    attribute_offset: int
-                    switch {
-                        case key == "NORMAL":     attribute_offset = 0
-                        case key == "TEXCOORD_0": attribute_offset = 3
-                        case key == "COLOR_0":    attribute_offset = 5
+                        game_primitive.attributes = make([]Vertex_Attributes, accessor.count)
                     }
 
-                    for i in 0..<accessor.count {
-                        vector := cast([^]f32)src[i*byte_stride:]
-                        for j in 0..<3 {
-                            game_primitive.attributes[9*i + attribute_offset + j] = vector[j]
-                        }
+                    switch {
+                        case key == "NORMAL": 
+                            for i in 0..<accessor.count {
+                                vector := cast([^]f32)src[i*byte_stride:]
+                                game_primitive.attributes[i].normal  = { vector[0], vector[1], vector[2] }
+                            }
+                        case key == "TEXCOORD_0":
+                            for i in 0..<accessor.count {
+                                vector := cast([^]f32)src[i*byte_stride:]
+                                game_primitive.attributes[i].texture = { vector[0], vector[1] }
+                            }
+                        case key == "COLOR_0":
+                            for i in 0..<accessor.count {
+                                vector := cast([^]f32)src[i*byte_stride:]
+                                game_primitive.attributes[i].color   = { vector[0], vector[1], vector[2], vector[3] }
+                            }
                     }
                 }
             }
@@ -290,5 +300,16 @@ load_glb_asset :: proc(allocator: mem.Allocator, glb_asset: ^GLTF_Asset) {
             delete(game_primitive.indices)
             delete(game_primitive.attributes)
         }
+    }
+
+    for material in glb_asset.materials {
+        game_material := Game_Material{
+            name = material.name,
+            base_color = material.pbrMetallicRoughness.baseColorFactor,
+            metallicity = material.pbrMetallicRoughness.metallicFactor,
+            roughness = material.pbrMetallicRoughness.roughnessFactor,
+        }
+        
+        serialize_material(allocator, game_material)
     }
 }

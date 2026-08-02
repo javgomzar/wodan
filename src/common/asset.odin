@@ -27,8 +27,9 @@ Game_Import_File :: struct {
 }
 
 Game_Asset_File_Header :: struct {
-    magic_number: u32,
-    mesh_count: u32,
+    magic_number:   u32,
+    mesh_count:     u32,
+    material_count: u32,
 }
 
 Game_Asset :: struct {
@@ -36,10 +37,10 @@ Game_Asset :: struct {
     file_info:    os.File_Info,
     import_files: [dynamic]Game_Import_File,
     meshes:       []Game_Mesh,
+    materials:    []Game_Material,
     // textures:     []Game_Textures,
     // fonts:        []Game_Font,
     // text:         []Game_Text,
-    memory:       rawptr,
     processing:   bool,
 }
 
@@ -94,10 +95,10 @@ process_asset :: proc(asset: ^Game_Asset) {
     total_size: int
 
     // Asset header
-    total_size += 4 // Magic number
-    total_size += 4 // Mesh count
+    total_size += size_of(Game_Asset_File_Header)
 
     n_meshes, n_mesh_primitives: int
+    n_materials: int
 
     for &file in asset.import_files {
         switch file.format {
@@ -110,6 +111,8 @@ process_asset :: proc(asset: ^Game_Asset) {
                     n_mesh_primitives += len(mesh.primitives)
                 }
 
+                n_materials = len(glb_asset.materials)
+
                 file.write_size = compute_needed_memory_glb(glb_asset)
             case .JPEG, .PNG, .BMP, .WAV:
                 log.fatal("Asset file loading with extension", file.format, "hasn't been implemented yet")
@@ -120,7 +123,6 @@ process_asset :: proc(asset: ^Game_Asset) {
         total_size += file.write_size
     }
 
-
     block, error := make([]byte, total_size, context.allocator)
     defer delete(block)
     if error != nil do log.fatal("Failed to allocate arena for asset processing")
@@ -128,9 +130,10 @@ process_asset :: proc(asset: ^Game_Asset) {
     mem.arena_init(&arena, block)
     allocator := mem.arena_allocator(&arena)
 
-    header := make([]u32, 2, allocator)
-    header[0] = 0xffaaaacc
-    header[1] = u32(n_meshes)
+    header := new(Game_Asset_File_Header, allocator)
+    header.magic_number = 0xffaaaacc
+    header.mesh_count = u32(n_meshes)
+    header.material_count = u32(n_materials)
 
     for file in asset.import_files {
         switch file.format {
@@ -160,15 +163,21 @@ load_asset :: proc(asset: ^Game_Asset) {
         log.fatal("Failed to read asset file", path)
     }
 
-    header := slice.reinterpret([]u32, data[:8])
-    assert(header[0] == 0xffaaaacc)
-    n_meshes := header[1]
+    header := cast(^Game_Asset_File_Header)raw_data(data)
+    assert(header.magic_number == 0xffaaaacc)
+    block := data[size_of(Game_Asset_File_Header):]
 
-    asset.meshes = make([]Game_Mesh, n_meshes)
-    block := data[8:]
+    asset.meshes = make([]Game_Mesh, header.mesh_count)
+    asset.materials = make([]Game_Material, header.material_count)
     for &mesh in asset.meshes {
         size: int
         mesh, size = deserialize_mesh(block)
+        block = block[size:]
+    }
+
+    for &material in asset.materials {
+        size: int
+        material, size = deserialize_material(block)
         block = block[size:]
     }
 
