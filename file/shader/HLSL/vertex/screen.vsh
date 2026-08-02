@@ -1,11 +1,4 @@
-cbuffer Globals: register(b0) {
-    float4x4 Projection;
-    float4x4 View;
-    float2 Resolution;
-    float2 Mouse;
-    float2 LastMouse;
-    float Time;
-};
+#include "common.hlsli"
 
 struct VS_IN {
     float3 position: POSITION;
