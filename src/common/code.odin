@@ -17,6 +17,7 @@ Game_Memory :: struct {
     delta_time:    f32,
     initialized:   bool,
     running:       bool,
+    testing:       bool,
 }
 
 Game_Code :: struct {

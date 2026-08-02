@@ -4,10 +4,9 @@ import "vendor:directx/dxc"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import w32 "core:sys/windows"
-import "core:path/filepath"
 import "core:os"
+import "core:mem"
 import "core:time"
-import "base:runtime"
 import "core:log"
 import "core:strings"
 
@@ -53,6 +52,7 @@ get_shader_path :: proc(id: Shader_Id) -> string {
 
 Shader_Pipeline_Id :: enum {
     Test_Pipeline,
+    Mesh_Pipeline,
 }
 
 Shader_Pipeline_Entry :: struct {
@@ -72,7 +72,25 @@ shader_pipeline_entries := [Shader_Pipeline_Id]Shader_Pipeline_Entry {
             .Compute =  .None,
             .Library =  .None,
         },
-    }
+    },
+    .Mesh_Pipeline = {
+        primitive = .TRIANGLE,
+        stage = {
+            .Vertex =   .Vertex_Mesh,
+            .Domain =   .None,
+            .Hull =     .None,
+            .Geometry = .None,
+            .Pixel =    .Pixel_Color,
+            .Compute =  .None,
+            .Library =  .None,
+        },
+    },
+}
+
+Constant_Buffer :: struct {
+    buffer:        ^d3d12.IResource,
+    mapped_memory: rawptr,
+    type:          typeid,
 }
 
 Global_Constant_Buffer :: struct #align(16) {
@@ -89,34 +107,39 @@ Transform_Constant_Buffer :: struct #align(16) {
     normal:    matrix[4, 4]f32,
 }
 
+// Light_Constant_Buffer :: struct #align(16) {
+//     direction: [3]f32,
+//     color:     []
+// }
+
 Constant_Buffer_Id :: enum {
     Global,
     Transform,
+    // Light,
 }
 
-constant_buffer_types :: [Constant_Buffer_Id]typeid {
+constant_buffer_types := [Constant_Buffer_Id]typeid{
     .Global = Global_Constant_Buffer,
     .Transform = Transform_Constant_Buffer,
+    // .Light = Light_Constant_Buffer,
 }
 
 set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
     for type, id in constant_buffer_types {
         if T == type {
-            read_range := d3d12.RANGE{0, 0}
-            mapped_data: rawptr = nil
-            renderer.constant_buffers[id]->Map(0, &read_range, &mapped_data)
-            runtime.mem_copy(mapped_data, value, size_of(T))
+            constant_buffer := renderer.constant_buffers[renderer.frame % N_BACK_BUFFERS][id]
+            mem.copy(constant_buffer.mapped_memory, value, size_of(T))
             return
         }
     }
 }
 
-shader_pipeline :: struct {
+Shader_Pipeline :: struct {
     root_signature: ^d3d12.IRootSignature,
     state:          ^d3d12.IPipelineState,
 }
 
-dxc_shader :: struct {
+DXC_Shader :: struct {
     id:                Shader_Id,
     path:              string,
     type:              Shader_Type,
@@ -127,13 +150,13 @@ dxc_shader :: struct {
     bytecode:          d3d12.SHADER_BYTECODE,
 }
 
-dxc_compiler :: struct {
+DXC_Compiler :: struct {
     utils:           ^dxc.IUtils,
     compiler:        ^dxc.ICompiler3,
     include_handler: ^dxc.IIncludeHandler,
 }
 
-initialize_shader_compiler :: proc(compiler: ^dxc_compiler) {
+initialize_shader_compiler :: proc(compiler: ^DXC_Compiler) {
     hr := dxc.CreateInstance(dxc.Utils_CLSID, dxc.IUtils_UUID, cast(rawptr)&compiler.utils)
     if hr < 0 do log.fatal("Failed to create DirectX compiler utils object")
 
@@ -144,35 +167,35 @@ initialize_shader_compiler :: proc(compiler: ^dxc_compiler) {
     if hr < 0 do log.fatal("Failed to create DirectX compiler include handler")
 }
 
-initialize_shader :: proc(id: Shader_Id, shader_list: ^[Shader_Id]dxc_shader) {
+initialize_shader :: proc(id: Shader_Id, shader_list: ^[Shader_Id]DXC_Shader) {
     shader := &shader_list[id]
     shader.id = id
     shader.path = strings.clone(get_shader_path(id))
     error: os.Error
     shader.last_modification, error = os.modification_time_by_path(shader.path)
     if error != nil do log.error("Failed to check modification time for file", shader.path)
-    extension := filepath.ext(shader.path)
+    _, extension := os.split_filename(shader.path)
     switch extension {
-        case ".vsh":
+        case "vsh":
             shader.type = .Vertex
-        case ".dsh":
+        case "dsh":
             shader.type = .Domain
-        case ".hsh":
+        case "hsh":
             shader.type = .Hull
-        case ".gsh":
+        case "gsh":
             shader.type = .Geometry
-        case ".psh":
+        case "psh":
             shader.type = .Pixel
-        case ".csh":
+        case "csh":
             shader.type = .Compute
-        case ".libsh":
+        case "libsh":
             shader.type = .Library
         case:
-            log.fatal("Invalid file extension '.", extension, "' for shader", sep = "")
+            log.fatal("Invalid file extension '.", extension, "' for shader ", shader.path, sep = "")
     }
 }
 
-compile_shader :: proc(compiler: ^dxc_compiler, shader: ^dxc_shader) -> bool {
+compile_shader :: proc(compiler: ^DXC_Compiler, shader: ^DXC_Shader) -> bool {
     data, error := os.read_entire_file(shader.path, context.temp_allocator)
     if error != nil{
         log.error("Failed to read shader file", shader.path)
@@ -191,7 +214,8 @@ compile_shader :: proc(compiler: ^dxc_compiler, shader: ^dxc_shader) -> bool {
 
     args: ^dxc.ICompilerArgs
     source_name := w32.utf8_to_wstring(shader.path)
-    hr := compiler.utils->BuildArguments(source_name, "main", shader_target[shader.type], nil, 0, nil, 0, &args)
+    arguments := []w32.wstring { "-I", "file/shader/HLSL", }
+    hr := compiler.utils->BuildArguments(source_name, "main", shader_target[shader.type], raw_data(arguments), u32(len(arguments)), nil, 0, &args)
     if hr < 0 {
         log.error("Failed to build arguments for DXC Compiler")
         return false
@@ -247,7 +271,7 @@ compile_shader :: proc(compiler: ^dxc_compiler, shader: ^dxc_shader) -> bool {
     return true
 }
 
-update_if_newer_shader :: proc(compiler: ^dxc_compiler, shader: ^dxc_shader) -> bool {
+update_if_newer_shader :: proc(compiler: ^DXC_Compiler, shader: ^DXC_Shader) -> bool {
     timestamp, error := os.modification_time_by_path(shader.path)
     if error != nil {
         log.error("Failed to check modification time for file", shader.path)

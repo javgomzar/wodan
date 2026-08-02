@@ -1,5 +1,6 @@
 package common
 
+
 Vertex_Position :: distinct [3]f32
 
 Vertex_Attributes :: struct #align(16) {

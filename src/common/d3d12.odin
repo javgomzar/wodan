@@ -3,9 +3,8 @@ package common
 import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
-import "core:math"
+import "core:slice"
 import "core:mem"
-import "base:runtime"
 import "core:log"
 
 
@@ -17,6 +16,25 @@ N_DEPTH_BUFFERS :: 1
 D3D12_Frame_Context :: struct {
     command_alloc: ^d3d12.ICommandAllocator,
     fence_value:   u64,
+}
+
+D3D12_get_primitive_topology :: proc(primitive: Primitive) -> d3d12.PRIMITIVE_TOPOLOGY {
+    switch primitive {
+        case .Point:          return .POINTLIST
+        case .Lines:          return .LINELIST
+        case .Line_Loop:      return .LINESTRIP
+        case .Line_Strip:     return .LINESTRIP
+        case .Triangles:      return .TRIANGLELIST
+        case .Triangle_Strip: return .TRIANGLESTRIP
+        case .Triangle_Fan:   return .TRIANGLESTRIP
+        case:
+            log.fatal("Invalid primitive topology", primitive)
+    }
+    return .POINTLIST
+}
+
+constant_buffer_id :: enum {
+    Global
 }
 
 Renderer_Context :: struct {
@@ -35,18 +53,18 @@ Renderer_Context :: struct {
     dsv_descriptor_size: u32,
     render_targets:      [N_BACK_BUFFERS]^d3d12.IResource,
     depth_stencils:      [N_DEPTH_BUFFERS]^d3d12.IResource,
-    position_buffer:     d3d12.VERTEX_BUFFER_VIEW,
-    attribute_buffer:    d3d12.VERTEX_BUFFER_VIEW,
-    shader_compiler:     dxc_compiler,
-    shaders:             [Shader_Id]dxc_shader,
-    shader_pipelines:    [Shader_Pipeline_Id]shader_pipeline,
-    global_buffers:      [N_BACK_BUFFERS]^d3d12.IResource,
-    global_mapped:       [N_BACK_BUFFERS]rawptr,
+    position_buffer:     ^d3d12.IResource,
+    attribute_buffer:    ^d3d12.IResource,
+    index_buffer:        ^d3d12.IResource,
+    shader_compiler:     DXC_Compiler,
+    shaders:             [Shader_Id]DXC_Shader,
+    shader_pipelines:    [Shader_Pipeline_Id]Shader_Pipeline,
+    constant_buffers:    [N_BACK_BUFFERS][Constant_Buffer_Id]Constant_Buffer,
 }
 
 EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
 
-initialize_renderer :: proc(renderer: ^Renderer_Context, width: u32, height: u32) {
+initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Renderer_Context, width: u32, height: u32) {
     hr: w32.HRESULT
     renderer.window = w32.GetActiveWindow()
 
@@ -262,15 +280,96 @@ initialize_renderer :: proc(renderer: ^Renderer_Context, width: u32, height: u32
     }
 
     // Vertex buffers
-    renderer.position_buffer = create_vertex_buffer(renderer.device, 3, Vertex_Position, &triangle_positions)
-    renderer.attribute_buffer = create_vertex_buffer(renderer.device, 3, Vertex_Attributes, &triangle_attributes)
+    position_count: u32
+    attribute_count: u32
+    index_count: u32
+
+    // RGB triangle
+    position_count += 3
+    attribute_count += 3
+
+    // Meshes
+    for asset in asset_manager.assets[1:] {
+        for mesh in asset.meshes {
+            for primitive in mesh.primitives {
+                position_count += u32(len(primitive.positions))
+                attribute_count += u32(len(primitive.attributes))
+                index_count += u32(len(primitive.indices))
+            }
+        }
+    }
+
+    renderer.position_buffer = create_buffer(renderer.device, position_count * size_of(Vertex_Position))
+    renderer.attribute_buffer = create_buffer(renderer.device, attribute_count * size_of(Vertex_Attributes))
+    renderer.index_buffer = create_buffer(renderer.device, index_count * size_of(u32))
+
+    mapped_position: rawptr = nil
+    mapped_attribute: rawptr = nil
+    mapped_index: rawptr = nil
+    read_range := d3d12.RANGE{0, 0}
+    
+    if hr = renderer.position_buffer->Map(0, &read_range, &mapped_position);   hr < 0 do log.fatal("Failed to map D3D12 position buffer")
+    if hr = renderer.attribute_buffer->Map(0, &read_range, &mapped_attribute); hr < 0 do log.fatal("Failed to map D3D12 attribute buffer")
+    if hr = renderer.index_buffer->Map(0, &read_range, &mapped_index);         hr < 0 do log.fatal("Failed to map D3D12 index buffer")
+
+    position_offset: int
+    attribute_offset: int
+    index_offset: int
+    position_ptr := cast([^]Vertex_Position)mapped_position
+    attribute_ptr := cast([^]Vertex_Attributes)mapped_attribute
+    index_ptr := cast([^]u32)mapped_index
+
+    // RGB triangle
+    copy(position_ptr[:3], triangle_positions[:])
+    position_ptr = position_ptr[3:]
+    position_offset += 3
+
+    copy(attribute_ptr[:3], triangle_attributes[:])
+    attribute_ptr = attribute_ptr[3:]
+    attribute_offset += 3
+
+    // Meshes
+    for asset in asset_manager.assets[1:] {
+        for mesh in asset.meshes {
+            for &primitive in mesh.primitives {
+                if n_indices := len(primitive.indices); n_indices > 0 {
+                    copy(index_ptr[:n_indices], primitive.indices)
+                    index_ptr = index_ptr[n_indices:]
+                    primitive.index_offset = index_offset
+                    index_offset += n_indices
+                }
+
+                n_positions := len(primitive.positions)
+                if n_positions == 0 do log.fatal("Mesh has 0 positions")
+                copy(position_ptr[:n_positions], primitive.positions)
+                position_ptr = position_ptr[n_positions:]
+                primitive.position_offset = position_offset
+                position_offset += n_positions
+
+                if n_attributes := len(primitive.attributes); n_attributes > 0 {
+                    copy(attribute_ptr[:n_attributes], primitive.attributes)
+                    attribute_ptr = attribute_ptr[n_attributes:]
+                    primitive.attribute_offset = attribute_offset
+                    attribute_offset += n_attributes
+                }
+            }
+        }
+    }
+    
+    renderer.position_buffer->Unmap(0, nil)
+    renderer.attribute_buffer->Unmap(0, nil)
+    renderer.index_buffer->Unmap(0, nil)
 
     // Constant buffers
     for i in 0..<N_BACK_BUFFERS {
-        size := mem.align_forward_int(size_of(Global_Constant_Buffer), 256)
-        renderer.global_buffers[i] = create_buffer(renderer.device, size)
-        read_range := d3d12.RANGE{0, 0}
-        renderer.global_buffers[i]->Map(0, &read_range, &renderer.global_mapped[i])
+        for id in Constant_Buffer_Id {
+            constant_buffer := &renderer.constant_buffers[i][id]
+            constant_buffer.type = constant_buffer_types[id]
+            size := mem.align_forward_int(size_of(constant_buffer.type), 256)
+            constant_buffer.buffer = create_buffer(renderer.device, u32(size))
+            read_range := d3d12.RANGE{0, 0}
+            constant_buffer.buffer->Map(0, &read_range, &constant_buffer.mapped_memory)
+        }
     }
 
     // Shaders
@@ -290,7 +389,7 @@ initialize_renderer :: proc(renderer: ^Renderer_Context, width: u32, height: u32
     renderer.command_list->Close()
 }
 
-create_buffer :: proc(device: ^d3d12.IDevice, size: int, memory: rawptr = nil) -> ^d3d12.IResource {
+create_buffer :: proc(device: ^d3d12.IDevice, size: u32, memory: rawptr = nil) -> ^d3d12.IResource {
     properties := d3d12.HEAP_PROPERTIES{
         Type = .UPLOAD,
         CPUPageProperty = .UNKNOWN,
@@ -330,21 +429,11 @@ create_buffer :: proc(device: ^d3d12.IDevice, size: int, memory: rawptr = nil) -
         if hr < 0 {
             log.fatal("Failed to map D3D12 generic buffer")
         }
-        runtime.mem_copy(mapped_data, memory, size)
+        mem.copy(mapped_data, memory, int(size))
         upload_buffer->Unmap(0, nil)
     }
 
     return upload_buffer
-}
-
-create_vertex_buffer :: proc(device: ^d3d12.IDevice, n_vertices: int, $T: typeid, memory: rawptr = nil) -> d3d12.VERTEX_BUFFER_VIEW {
-    buffer := create_buffer(device, n_vertices * size_of(T), memory)
-
-    return d3d12.VERTEX_BUFFER_VIEW{
-        BufferLocation = buffer->GetGPUVirtualAddress(),
-        StrideInBytes = size_of(T),
-        SizeInBytes = u32(n_vertices * size_of(T)),
-    }
 }
 
 render :: proc(memory: ^Game_Memory) {
@@ -417,27 +506,78 @@ render :: proc(memory: ^Game_Memory) {
 
     // Global constant buffer
     global_cb := Global_Constant_Buffer{
+        projection = get_projection_matrix(f32(group.width), f32(group.height)),
+        view = get_view_matrix(get_camera_basis(group.camera.angle, group.camera.pitch), group.camera.distance, group.camera.position),
         resolution = {f32(group.width), f32(group.height)},
         mouse = input.mouse.cursor,
-        last_mouse = input.mouse.cursor,
+        last_mouse = input.mouse.last_cursor,
     }
-    // set_global_constant_buffer(renderer, &global_cb)
+    set_constant_buffer(renderer, &global_cb)
 
-    pipeline := &renderer.shader_pipelines[.Test_Pipeline]
-    renderer.command_list->SetGraphicsRootSignature(pipeline.root_signature)
-    // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
-
-    renderer.command_list->SetPipelineState(pipeline.state)
+    transform_cb := Transform_Constant_Buffer{
+        transform = 1,
+        normal = 1,
+    }
+    set_constant_buffer(renderer, &transform_cb)
 
     renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
-
-    clear_color := [4]f32{0.5 + 0.5*math.sin(f32(renderer.frame) / 100.0), 0.0, 0.5, 1.0}
-    renderer.command_list->ClearRenderTargetView(rtv_handle, &clear_color, 0, nil)
-    renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
     
-    renderer.command_list->IASetPrimitiveTopology(.TRIANGLELIST)
-    renderer.command_list->IASetVertexBuffers(0, 2, &renderer.position_buffer)
-    renderer.command_list->DrawInstanced(3, 1, 0, 0)
+    for entry in group.commands {
+        switch entry.type {
+            case .Clear:
+                color := [4]f32{ entry.color.r, entry.color.g, entry.color.b, 1.0}
+                renderer.command_list->ClearRenderTargetView(rtv_handle, &color, 0, nil)
+                renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
+            case .Mesh:
+                pipeline := &renderer.shader_pipelines[entry.pipeline]
+                renderer.command_list->SetGraphicsRootSignature(pipeline.root_signature)
+
+                #partial switch entry.pipeline {
+                    case .Mesh_Pipeline:
+                        global := renderer.constant_buffers[frame_index][.Global]
+                        renderer.command_list->SetGraphicsRootConstantBufferView(0, global.buffer->GetGPUVirtualAddress())
+                        transform := renderer.constant_buffers[frame_index][.Transform]
+                        renderer.command_list->SetGraphicsRootConstantBufferView(1, transform.buffer->GetGPUVirtualAddress())
+                }
+
+                // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
+                renderer.command_list->SetPipelineState(pipeline.state)
+                primitive := D3D12_get_primitive_topology(entry.primitive)
+                renderer.command_list->IASetPrimitiveTopology(primitive)
+                
+                n_buffers: u32 = 1
+                vertex_buffers := []d3d12.VERTEX_BUFFER_VIEW{
+                    {
+                        BufferLocation = renderer.position_buffer->GetGPUVirtualAddress() + u64(entry.position_offset * size_of(Vertex_Position)),
+                        SizeInBytes = u32(entry.position_count * size_of(Vertex_Position)),
+                        StrideInBytes = size_of(Vertex_Position),
+                    },
+                    {
+                        BufferLocation = renderer.attribute_buffer->GetGPUVirtualAddress() + u64(entry.attribute_offset * size_of(Vertex_Attributes)),
+                        SizeInBytes = u32(entry.attribute_count * size_of(Vertex_Attributes)),
+                        StrideInBytes = size_of(Vertex_Attributes),
+                    },
+                }
+
+                if entry.attribute_count > 0 {
+                    n_buffers = 2
+                }
+                renderer.command_list->IASetVertexBuffers(0, n_buffers, raw_data(vertex_buffers))
+
+                if entry.index_count > 0 {
+                    index_buffer_view := d3d12.INDEX_BUFFER_VIEW{
+                        BufferLocation = renderer.index_buffer->GetGPUVirtualAddress() + u64(entry.index_offset * size_of(u32)),
+                        Format = .R32_UINT,
+                        SizeInBytes = u32(entry.index_count * size_of(u32)),
+                    }
+                    renderer.command_list->IASetIndexBuffer(&index_buffer_view)
+                    renderer.command_list->DrawIndexedInstanced(u32(entry.index_count), 1, 0, 0, 0)
+                }
+                else {
+                    renderer.command_list->DrawInstanced(u32(entry.position_count), 1, 0, 0)
+                }
+        }
+    }
 
     barrier = d3d12.RESOURCE_BARRIER{
         Type = .TRANSITION,
