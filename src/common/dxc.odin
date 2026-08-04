@@ -114,29 +114,14 @@ Light_Constant_Buffer :: struct #align(16) {
     diffuse:          f32,
 }
 
-Transform_Constant_Buffer :: struct #align(16) {
-    transform: matrix[4, 4]f32,
-    normal:    matrix[4, 4]f32,
-}
-
-Material_Constant_Buffer :: struct #align(16) {
-    color: [4]f32,
-    metallicity: f32,
-    roughness: f32,
-}
-
 Constant_Buffer_ID :: enum {
     Global,
     Light,
-    Material,
-    Transform,
 }
 
 constant_buffer_types := [Constant_Buffer_ID]typeid{
     .Global = Global_Constant_Buffer,
     .Light = Light_Constant_Buffer,
-    .Material = Material_Constant_Buffer,
-    .Transform = Transform_Constant_Buffer,
 }
 
 set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
@@ -147,6 +132,14 @@ set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
             return
         }
     }
+}
+
+Per_Draw_Data :: struct #align(256) {
+    transform:      matrix[4, 4]f32,
+    normal:         matrix[4, 4]f32,
+    material_color: [4]f32,
+    metallic:       f32,
+    roughness:      f32,
 }
 
 DXC_Shader :: struct {
@@ -369,7 +362,7 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
 }
 
 create_root_signature :: proc(renderer: ^Renderer_Context) {
-    #assert(len(Constant_Buffer_ID) == 4)
+    #assert(len(Constant_Buffer_ID) == 2)
     root_params: [4]d3d12.ROOT_PARAMETER
 
     for &param, id in root_params {

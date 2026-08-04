@@ -1,10 +1,11 @@
 package common
 
+import "core:mem"
+import "core:log"
+import "core:math/linalg"
 import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
-import "core:mem"
-import "core:log"
 import "../asset"
 
 
@@ -31,6 +32,24 @@ D3D12_get_primitive_topology :: proc(primitive: asset.Topology) -> d3d12.PRIMITI
     return .POINTLIST
 }
 
+RING_BUFFER_SIZE :: mem.Megabyte
+
+D3D12_Ring_Buffer :: struct {
+    using resource: ^d3d12.IResource,
+    offset:         int,
+    mapped:         rawptr,
+}
+
+allocate_from_ring_buffer :: proc(buffer: ^D3D12_Ring_Buffer, value: $T) -> d3d12.GPU_VIRTUAL_ADDRESS {
+    aligned_size := (1 + size_of(T) / 256) * 256
+    assert(buffer.offset + aligned_size < RING_BUFFER_SIZE)
+    pointer := ([^]byte)(buffer.mapped)[buffer.offset:]
+    asset.dump_to_memory(pointer[:aligned_size], value)
+    offset := u64(buffer.offset)
+    buffer.offset += aligned_size
+    return buffer->GetGPUVirtualAddress() + offset
+}
+
 Renderer_Context :: struct {
     frame:               u64,
     window:              w32.HWND,
@@ -55,6 +74,7 @@ Renderer_Context :: struct {
     shaders:             [Shader_ID]DXC_Shader,
     shader_pipelines:    [Shader_Pipeline_ID]^d3d12.IPipelineState,
     constant_buffers:    [N_BACK_BUFFERS][Constant_Buffer_ID]Constant_Buffer,
+    ring_buffers:        [N_BACK_BUFFERS]D3D12_Ring_Buffer,
 }
 
 EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
@@ -356,6 +376,40 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
         }
     }
 
+    // Per draw data
+    heap_properties := d3d12.HEAP_PROPERTIES{ Type = .UPLOAD, }
+    heap_desc := d3d12.RESOURCE_DESC{
+        Dimension = .BUFFER,
+        Alignment = 0,
+        Width = mem.Megabyte,
+        Height = 1,
+        DepthOrArraySize = 1,
+        MipLevels = 1,
+        Format = .UNKNOWN,
+        Layout = .ROW_MAJOR,
+        SampleDesc = {
+            Count = 1,
+            Quality = 0,
+        },
+    }
+    for &ring_buffer in renderer.ring_buffers {
+        renderer.device->CreateCommittedResource(
+            &heap_properties, 
+            {}, 
+            &heap_desc, 
+            d3d12.RESOURCE_STATE_GENERIC_READ, 
+            nil, 
+            d3d12.IResource_UUID, 
+            (^rawptr)(&ring_buffer.resource)
+        )
+
+        read_range := d3d12.RANGE{0, 0}
+        hr = ring_buffer->Map(0, &read_range, &ring_buffer.mapped)
+        if hr < 0 {
+            log.fatal("Failed to map D3D12 ring buffer")
+        }
+    }
+
     // Shaders
     initialize_shader_compiler(&renderer.shader_compiler)
 
@@ -429,6 +483,7 @@ render :: proc(memory: ^Game_Memory) {
     input := &memory.input
     frame_index := renderer.frame % N_BACK_BUFFERS
     frame_context := &renderer.frame_context[frame_index]
+    ring_buffer := &renderer.ring_buffers[frame_index]
 
     // Shader hot-reloading
     updated: [Shader_ID]bool
@@ -484,6 +539,8 @@ render :: proc(memory: ^Game_Memory) {
     }
     renderer.command_list->ResourceBarrier(1, &barrier)
 
+    ring_buffer.offset = 0
+
     rtv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
     rtv_descriptor_size := renderer.device->GetDescriptorHandleIncrementSize(.RTV)
     renderer.rtv_heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
@@ -510,12 +567,6 @@ render :: proc(memory: ^Game_Memory) {
     }
     set_constant_buffer(renderer, &light_cb)
 
-    transform_cb := Transform_Constant_Buffer{
-        transform = 1,
-        normal = 1,
-    }
-    set_constant_buffer(renderer, &transform_cb)
-
     renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
     renderer.command_list->SetGraphicsRootSignature(renderer.root_signature)
     global := renderer.constant_buffers[frame_index][.Global]
@@ -532,20 +583,15 @@ render :: proc(memory: ^Game_Memory) {
             case .Mesh:
                 pipeline := renderer.shader_pipelines[entry.pipeline]
 
-                #partial switch entry.pipeline {
-                    case .Mesh_Pipeline:
-                        material_cb := Material_Constant_Buffer{
-                            color = entry.material.base_color,
-                            metallicity = entry.material.metallicity,
-                            roughness = entry.material.roughness,
-                        }
-                        set_constant_buffer(renderer, &material_cb)
-                        material := renderer.constant_buffers[frame_index][.Material]
-                        renderer.command_list->SetGraphicsRootConstantBufferView(2, material.buffer->GetGPUVirtualAddress())
+                data := Per_Draw_Data{
+                    transform = linalg.transpose(entry.transform),
+                    normal = linalg.matrix4_from_matrix3(linalg.inverse(linalg.matrix3_from_matrix4(entry.transform))),
+                    material_color = entry.material.base_color,
+                    metallic = entry.material.metallic,
+                    roughness = entry.material.roughness,
                 }
-
-                transform := renderer.constant_buffers[frame_index][.Transform]
-                renderer.command_list->SetGraphicsRootConstantBufferView(3, transform.buffer->GetGPUVirtualAddress())
+                transform_address := allocate_from_ring_buffer(ring_buffer, data)
+                renderer.command_list->SetGraphicsRootConstantBufferView(2, transform_address)
 
                 // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
                 renderer.command_list->SetPipelineState(pipeline)

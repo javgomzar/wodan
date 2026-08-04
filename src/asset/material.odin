@@ -7,7 +7,7 @@ import "core:slice"
 Material :: struct {
     name: string,
     base_color: [4]f32,
-    metallicity: f32,
+    metallic: f32,
     roughness: f32,
 }
 
@@ -27,7 +27,7 @@ serialize_material :: proc(allocator: mem.Allocator, material: Material) {
         material.base_color[1],
         material.base_color[2],
         material.base_color[3],
-        material.metallicity,
+        material.metallic,
         material.roughness,
     }
     copy(block, slice.to_bytes(data))

@@ -20,15 +20,12 @@ cbuffer Light: register(b1) {
 	float diffuse;
 };
 
-cbuffer Material: register(b2) {
+cbuffer PerDrawData: register(b2) {
+    float4x4 transform_model;
+    float4x4 transform_normal;
     float4 material_color;
     float metallic;
     float roughness;
 }
-
-cbuffer Transforms: register(b3) {
-    float4x4 transform_model;
-    float4x4 transform_normal;
-};
 
 #endif

@@ -71,7 +71,7 @@ test_asset_loading :: proc(manager: ^asset.Manager, path: string, import_files: 
         loaded_material := loaded_asset.materials[m_index]
         assert(material.name == loaded_material.name)
         assert(material.base_color == loaded_material.base_color)
-        assert(material.metallicity == loaded_material.metallicity)
+        assert(material.metallic == loaded_material.metallic)
         assert(material.roughness == loaded_material.roughness)
     }
 

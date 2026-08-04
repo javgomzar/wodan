@@ -302,10 +302,10 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
     // Load materials
     for material in gltf_asset.materials {
         append(&load_context.materials, Material{
-            name        = material.name,
-            base_color  = material.pbrMetallicRoughness.baseColorFactor,
-            metallicity = material.pbrMetallicRoughness.metallicFactor,
-            roughness   = material.pbrMetallicRoughness.roughnessFactor,
+            name       = material.name,
+            base_color = material.pbrMetallicRoughness.baseColorFactor,
+            metallic   = material.pbrMetallicRoughness.metallicFactor,
+            roughness  = material.pbrMetallicRoughness.roughnessFactor,
         })
     }
 

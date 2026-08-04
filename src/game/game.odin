@@ -48,7 +48,12 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
 
     mesh := &asset_manager.assets[1].meshes[0]
     material := &asset_manager.assets[1].materials[0]
-    common.push_mesh(render_group, mesh, material, .Test_Pipeline)
+
+    for i in 0..<10 {
+        for j in 0..<10 {
+            common.push_mesh(render_group, mesh, material, .Test_Pipeline, translation = {f32(i), f32(j), 0})
+        }
+    }
 
     common.render(memory)
 }

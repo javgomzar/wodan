@@ -250,8 +250,9 @@ initialize_manager :: proc(manager: ^Manager) {
     // empty asset for id 0
     add_asset(manager, "")
 
-    system_asset := add_asset(manager, "file/asset/system.ass")
+    system_asset := add_asset(manager, "file/asset/system.ass", force_process = true)
     manager.system_asset_id = system_asset.id
 
+    //add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/Box/glTF-Binary/Box.glb")
     add_file(system_asset, "file/asset/test/RGBTriangle.glb")
 }

@@ -84,6 +84,7 @@ Render_Entry :: struct {
     attribute_count:  int,
     index_offset:     int,
     index_count:      int,
+    transform:        matrix[4, 4]f32,
     pipeline:         Shader_Pipeline_ID,
     material:         ^asset.Material,
     color:            [4]f32,
@@ -123,20 +124,24 @@ add_entry :: proc(group: ^Render_Group, entry: Render_Entry) -> ^Render_Entry {
 }
 
 push_clear :: proc(group: ^Render_Group, color: [3]f32) {
-    entry := add_entry(group, { type = .Clear, pipeline = .Test_Pipeline })
+    entry := add_entry(group, { type = .Clear })
     entry.color.rgb = color
 }
 
 push_mesh :: proc(
-    group:    ^Render_Group,
-    mesh:     ^asset.Mesh,
-    material: ^asset.Material,
-    pipeline: Shader_Pipeline_ID,
-    outline:  bool = false,
+    group:       ^Render_Group,
+    mesh:        ^asset.Mesh,
+    material:    ^asset.Material,
+    pipeline:    Shader_Pipeline_ID,
+    translation: linalg.Vector3f32 = 0,
+    rotation:    linalg.Quaternionf32 = 1,
+    scale:       linalg.Vector3f32 = 1,
+    outline:     bool = false,
 ) {
     for primitive in mesh.primitives {
         add_entry(group, {
             type = .Mesh,
+            transform = linalg.matrix4_from_trs_f32(translation, rotation, scale),
             material = material,
             topology = primitive.topology,
             pipeline = pipeline,
