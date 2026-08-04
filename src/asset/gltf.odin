@@ -54,7 +54,7 @@ GLTF_Primitive_Mode :: enum {
 }
 
 GLTF_Primitive :: struct {
-    mode:       GLTF_Primitive_Mode,
+    mode:       Maybe(GLTF_Primitive_Mode),
     attributes: map[string]int,
     indices:    Maybe(int),
     material:   Maybe(int),
@@ -214,16 +214,18 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
         for primitive, index in mesh.primitives {
             game_primitive := &game_mesh.primitives[index]
 
-            switch primitive.mode {
-                case .Point:                         game_primitive.topology = .Point
-                case .Line:                          game_primitive.topology = .Line
-                case .Line_Loop, .Line_Strip:        game_primitive.topology = .Line_Strip
-                case .Triangles:                     game_primitive.topology = .Triangle
-                case .Triangle_Strip, .Triangle_Fan: game_primitive.topology = .Triangle_Strip
+            if mode, mode_ok := primitive.mode.?; mode_ok {
+                switch mode {
+                    case .Point:                         game_primitive.topology = .Point
+                    case .Line:                          game_primitive.topology = .Line
+                    case .Line_Loop, .Line_Strip:        game_primitive.topology = .Line_Strip
+                    case .Triangles:                     game_primitive.topology = .Triangle
+                    case .Triangle_Strip, .Triangle_Fan: game_primitive.topology = .Triangle_Strip
+                }
             }
+            else do game_primitive.topology = .Triangle
 
-            indices, ok := primitive.indices.?
-            if ok {
+            if indices, indices_ok := primitive.indices.?; indices_ok {
                 accessor := gltf_asset.accessors[indices]
                 assert(accessor.type == "SCALAR")
 
@@ -257,9 +259,8 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
                 pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:]
 
                 n_components := get_accessor_type_components(accessor.type)
-                byte_stride: int
-                byte_stride, ok = bufferview.byteStride.?
-                if !ok {
+                byte_stride, byte_stride_ok := bufferview.byteStride.?
+                if !byte_stride_ok {
                     byte_stride = n_components * get_component_type_size(.F32)
                 }
 

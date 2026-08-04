@@ -9,5 +9,5 @@ struct VS_OUT {
 float4 main(VS_OUT vout): SV_TARGET {
     float4 color = vout.color;
     
-    return float4(0.0, 1.0, 0.0, 1.0);
+    return color;
 }

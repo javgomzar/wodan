@@ -239,10 +239,19 @@ release :: proc(asset: ^Asset) {
     os.file_info_delete(asset.file_info, context.allocator)
 }
 
+release_assets :: proc(manager: ^Manager) {
+    for &asset in manager.assets[1:] {
+        release(&asset)
+    }
+    delete(manager.assets)
+}
+
 initialize_manager :: proc(manager: ^Manager) {
     // empty asset for id 0
     add_asset(manager, "")
 
     system_asset := add_asset(manager, "file/asset/system.ass")
     manager.system_asset_id = system_asset.id
+
+    add_file(system_asset, "file/asset/test/RGBTriangle.glb")
 }

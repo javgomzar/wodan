@@ -279,16 +279,12 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
     attribute_count: u32
     index_count: u32
 
-    // RGB triangle
-    position_count += 3
-    attribute_count += 3
-
     // Meshes
     for asset in asset_manager.assets[1:] {
         for mesh in asset.meshes {
             for primitive in mesh.primitives {
                 position_count += u32(len(primitive.positions))
-                attribute_count += u32(len(primitive.attributes))
+                attribute_count += u32(len(primitive.attributes)) 
                 index_count += u32(len(primitive.indices))
             }
         }
@@ -296,7 +292,9 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
 
     renderer.position_buffer = create_buffer(renderer.device, position_count * size_of(asset.Vertex_Position))
     renderer.attribute_buffer = create_buffer(renderer.device, attribute_count * size_of(asset.Vertex_Attributes))
-    renderer.index_buffer = create_buffer(renderer.device, index_count * size_of(u32))
+    if index_count > 0 {
+        renderer.index_buffer = create_buffer(renderer.device, index_count * size_of(u32))
+    }
 
     mapped_position: rawptr = nil
     mapped_attribute: rawptr = nil
@@ -313,15 +311,6 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
     position_ptr := cast([^]asset.Vertex_Position)mapped_position
     attribute_ptr := cast([^]asset.Vertex_Attributes)mapped_attribute
     index_ptr := cast([^]u32)mapped_index
-
-    // RGB triangle
-    copy(position_ptr[:3], asset.triangle_positions[:])
-    position_ptr = position_ptr[3:]
-    position_offset += 3
-
-    copy(attribute_ptr[:3], asset.triangle_attributes[:])
-    attribute_ptr = attribute_ptr[3:]
-    attribute_offset += 3
 
     // Meshes
     for asset in asset_manager.assets[1:] {
@@ -553,10 +542,10 @@ render :: proc(memory: ^Game_Memory) {
                         set_constant_buffer(renderer, &material_cb)
                         material := renderer.constant_buffers[frame_index][.Material]
                         renderer.command_list->SetGraphicsRootConstantBufferView(2, material.buffer->GetGPUVirtualAddress())
-
-                        transform := renderer.constant_buffers[frame_index][.Transform]
-                        renderer.command_list->SetGraphicsRootConstantBufferView(3, transform.buffer->GetGPUVirtualAddress())
                 }
+
+                transform := renderer.constant_buffers[frame_index][.Transform]
+                renderer.command_list->SetGraphicsRootConstantBufferView(3, transform.buffer->GetGPUVirtualAddress())
 
                 // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
                 renderer.command_list->SetPipelineState(pipeline)

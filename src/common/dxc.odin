@@ -66,7 +66,7 @@ shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
     .Test_Pipeline = {
         primitive = .TRIANGLE,
         stage = {
-            .Vertex =   .Vertex_Passthrough,
+            .Vertex =   .Vertex_Mesh,
             .Domain =   .None,
             .Hull =     .None,
             .Geometry = .None,
@@ -442,7 +442,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
         },
         RasterizerState = {
             FillMode = .SOLID,
-            CullMode = .FRONT,
+            CullMode = .NONE,
             FrontCounterClockwise = w32.FALSE,
             DepthBias = d3d12.DEFAULT_DEPTH_BIAS,
             DepthBiasClamp = d3d12.DEFAULT_DEPTH_BIAS_CLAMP,

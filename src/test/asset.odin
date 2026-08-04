@@ -84,7 +84,6 @@ test_asset_loading :: proc(manager: ^asset.Manager, path: string, import_files: 
         assert(slice.equal(image.pixels.buf[:], loaded_image.pixels.buf[:]))
     }
 
-    asset.release(test_asset)
     asset.release(&loaded_asset)
 }
 
@@ -98,5 +97,5 @@ test_asset_loading_box :: proc(T: ^testing.T) {
         "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTextured/glTF-Binary/BoxTextured.glb",
     })
 
-    delete(manager.assets)
+    asset.release_assets(&manager)
 }

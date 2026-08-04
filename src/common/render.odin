@@ -1,10 +1,10 @@
 package common
 
+import "core:log"
 import "core:math"
 import "core:math/linalg"
-import "core:mem/virtual"
 import "core:mem"
-import "core:log"
+import "core:mem/virtual"
 import "../asset"
 
 
@@ -131,6 +131,7 @@ push_mesh :: proc(
     group:    ^Render_Group,
     mesh:     ^asset.Mesh,
     material: ^asset.Material,
+    pipeline: Shader_Pipeline_ID,
     outline:  bool = false,
 ) {
     for primitive in mesh.primitives {
@@ -138,7 +139,7 @@ push_mesh :: proc(
             type = .Mesh,
             material = material,
             topology = primitive.topology,
-            pipeline = .Mesh_Pipeline,
+            pipeline = pipeline,
             index_count = len(primitive.indices),
             index_offset = primitive.index_offset,
             position_count = len(primitive.positions),
@@ -147,16 +148,4 @@ push_mesh :: proc(
             attribute_offset = primitive.attribute_offset,
         })
     }
-}
-
-push_rgb_triangle :: proc(group: ^Render_Group) {
-    add_entry(group, {
-        type = .Mesh,
-        pipeline = .Test_Pipeline,
-        topology = .Triangle,
-        position_count = 3,
-        position_offset = 0,
-        attribute_count = 3,
-        attribute_offset = 0,
-    })
 }
