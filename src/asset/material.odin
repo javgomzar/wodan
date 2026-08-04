@@ -1,21 +1,21 @@
-package common
+package asset
 
 import "core:mem"
 import "core:slice"
 
 
-Game_Material :: struct {
+Material :: struct {
     name: string,
     base_color: [4]f32,
     metallicity: f32,
     roughness: f32,
 }
 
-get_serialized_size_material :: proc(material: Game_Material) -> int {
+get_serialized_size_material :: proc(material: Material) -> int {
     return get_serialized_size_string(material.name) + 6 * size_of(f32)
 }
 
-serialize_material :: proc(allocator: mem.Allocator, material: Game_Material) {
+serialize_material :: proc(allocator: mem.Allocator, material: Material) {
     size := get_serialized_size_material(material)
     block := make([]byte, size, allocator)
 
@@ -33,8 +33,8 @@ serialize_material :: proc(allocator: mem.Allocator, material: Game_Material) {
     copy(block, slice.to_bytes(data))
 }
 
-deserialize_material :: proc(memory: []byte) -> (Game_Material, int) {
-    material: Game_Material
+deserialize_material :: proc(memory: []byte) -> (Material, int) {
+    material: Material
     material.name = deserialize_string(memory)
     name_size := get_serialized_size_string(material.name)
     block := memory[name_size:]

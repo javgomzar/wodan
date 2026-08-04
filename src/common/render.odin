@@ -5,17 +5,8 @@ import "core:math/linalg"
 import "core:mem/virtual"
 import "core:mem"
 import "core:log"
+import "../asset"
 
-
-Primitive :: enum u32 {
-    Point =          0,
-    Lines =          1,
-    Line_Loop =      2,
-    Line_Strip =     3,
-    Triangles =      4,
-    Triangle_Strip = 5,
-    Triangle_Fan =   6,
-}
 
 Camera :: struct {
     position: [3]f32,
@@ -86,15 +77,15 @@ Render_Entry_Type :: enum {
 Render_Entry :: struct {
     type:             Render_Entry_Type,
     key:              Sort_Key,
-    primitive:        Primitive,
+    topology:         asset.Topology,
     position_offset:  int,
     position_count:   int,
     attribute_offset: int,
     attribute_count:  int,
     index_offset:     int,
     index_count:      int,
-    pipeline:         Shader_Pipeline_Id,
-    material:         ^Game_Material,
+    pipeline:         Shader_Pipeline_ID,
+    material:         ^asset.Material,
     color:            [4]f32,
 }
 
@@ -138,15 +129,15 @@ push_clear :: proc(group: ^Render_Group, color: [3]f32) {
 
 push_mesh :: proc(
     group:    ^Render_Group,
-    mesh:     ^Game_Mesh,
-    material: ^Game_Material,
+    mesh:     ^asset.Mesh,
+    material: ^asset.Material,
     outline:  bool = false,
 ) {
     for primitive in mesh.primitives {
         add_entry(group, {
             type = .Mesh,
             material = material,
-            primitive = primitive.topology,
+            topology = primitive.topology,
             pipeline = .Mesh_Pipeline,
             index_count = len(primitive.indices),
             index_offset = primitive.index_offset,
@@ -162,7 +153,7 @@ push_rgb_triangle :: proc(group: ^Render_Group) {
     add_entry(group, {
         type = .Mesh,
         pipeline = .Test_Pipeline,
-        primitive = .Triangles,
+        topology = .Triangle,
         position_count = 3,
         position_offset = 0,
         attribute_count = 3,

@@ -1,8 +1,11 @@
-package common
+package asset
 
 import "core:os"
 import "core:log"
-import "core:mem"
+import vmem "core:mem/virtual"
+import img "core:image"
+import "core:image/png"
+import "core:image/jpeg"
 import "core:encoding/json"
 
 
@@ -40,8 +43,18 @@ GLTF_Scene :: struct {
     nodes: []int,
 }
 
+GLTF_Primitive_Mode :: enum {
+    Point =          0,
+    Line =           1,
+    Line_Loop =      2,
+    Line_Strip =     3,
+    Triangles =      4,
+    Triangle_Strip = 5,
+    Triangle_Fan =   6,
+}
+
 GLTF_Primitive :: struct {
-    mode:       Primitive,
+    mode:       GLTF_Primitive_Mode,
     attributes: map[string]int,
     indices:    Maybe(int),
     material:   Maybe(int),
@@ -105,12 +118,17 @@ get_component_type_id :: proc(component_type: GLTF_Component_Type) -> typeid {
     return nil
 }
 
+GLTF_Base_Color_Texture :: struct {
+    index: int,
+}
+
 GLTF_Material :: struct {
     name: string,
     pbrMetallicRoughness: struct {
-        baseColorFactor: [4]f32,
-        metallicFactor:  f32,
-        roughnessFactor: f32,
+        baseColorFactor:  [4]f32,
+        baseColorTexture: Maybe(GLTF_Base_Color_Texture),
+        metallicFactor:   f32,
+        roughnessFactor:  f32,
     },
     emissive_factor: [3]f32,
 }
@@ -125,7 +143,17 @@ GLTF_Buffer_View :: struct {
 
 GLTF_Buffer :: struct {
     byteLength: int,
-    memory:     rawptr,
+    memory:     []byte,
+}
+
+GLTF_Texture :: struct {
+    source: int,
+    sampler: Maybe(int),
+}
+
+GLTF_Image :: struct {
+    bufferView: int,
+    mimeType: string,
 }
 
 GLTF_Asset :: struct {
@@ -134,14 +162,28 @@ GLTF_Asset :: struct {
     scenes:      []GLTF_Scene,
     nodes:       []GLTF_Node,
     materials:   []GLTF_Material,
+    textures:    []GLTF_Texture,
+    images:      []GLTF_Image,
     meshes:      []GLTF_Mesh,
     accessors:   []GLTF_Accessor,
     bufferViews: []GLTF_Buffer_View,
     buffers:     []GLTF_Buffer,
 }
 
-read_glb_asset :: proc(path: string) -> ^GLTF_Asset {
-    data, os_error := os.read_entire_file(path, context.temp_allocator)
+parse_gltf_json :: proc(memory: []byte) -> GLTF_Asset {
+    gltf_asset: GLTF_Asset
+    err := json.unmarshal(memory, &gltf_asset, json.DEFAULT_SPECIFICATION, context.temp_allocator)
+    if err != nil do log.fatal("Failed to unmarshal a GLTF_Asset struct from JSON")
+    return gltf_asset
+}
+
+import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
+    arena: vmem.Arena
+    error := vmem.arena_init_growing(&arena)
+    if error != nil do log.fatal("Failed to initialize memory arena for GLB asset", path)
+    allocator := vmem.arena_allocator(&arena)
+
+    data, os_error := os.read_entire_file(path, allocator)
     if os_error != nil do log.fatal("Failed to read file", path)
 
     pointer := data
@@ -154,94 +196,53 @@ read_glb_asset :: proc(path: string) -> ^GLTF_Asset {
     assert(json_chunk.type == .JSON)
     pointer = pointer[size_of(json_chunk):]
 
-    glb_asset := new(GLTF_Asset)
-    err := json.unmarshal(pointer[:json_chunk.length], glb_asset, json.DEFAULT_SPECIFICATION, context.temp_allocator)
-    if err != nil do log.fatal("Failed to unmarshal a GLTF_Asset struct from JSON")
+    gltf_asset := parse_gltf_json(pointer[:json_chunk.length])
     pointer = pointer[json_chunk.length:]
 
     bin_chunk := extract_from_memory(pointer, GLTF_Chunk_Header)
     assert(bin_chunk.type == .BIN)
     pointer = pointer[size_of(bin_chunk):]
-    glb_asset.buffers[0].memory = raw_data(pointer)
+    gltf_asset.buffers[0].memory = pointer
 
-    return glb_asset
-}
-
-compute_needed_memory_glb :: proc(asset: ^GLTF_Asset) -> int {
-    total_size: int
-    for mesh in asset.meshes {
-        total_size += get_serialized_size_string(mesh.name)
-        total_size += 4              // primitive count (u32)
-        for primitive in mesh.primitives {
-            total_size += size_of(Primitive)
-            indices, ok := primitive.indices.?
-            if ok {
-                accessor := asset.accessors[indices]
-                total_size += 4 + accessor.count * size_of(u32)
-            }
-
-            positions := asset.accessors[primitive.attributes["POSITION"]]
-            total_size += 4 + positions.count * size_of(Vertex_Position)
-
-            attributes: []string = {"NORMAL", "TEXCOORD_0", "COLOR_0"}
-            attributes_count: int
-            for attribute in attributes {
-                accessor_index, exists := primitive.attributes[attribute]
-                if exists {
-                    attributes_count = asset.accessors[accessor_index].count
-                    assert(attributes_count == positions.count)
-                    break
-                }
-            }
-            total_size += 4 + attributes_count * size_of(Vertex_Attributes)
+    // Load meshes
+    for mesh in gltf_asset.meshes {
+        game_mesh := Mesh{
+            name = mesh.name,
+            primitives = make([]Primitive, len(mesh.primitives)),
         }
-    }
 
-    for material in asset.materials {
-        total_size += get_serialized_size_string(material.name)
-        total_size += 6 * size_of(f32)
-    }
-
-    return total_size
-}
-
-widen_to_u32 :: proc(out: []u32, src: [^]$T, count: int) {
-    for i in 0..<count {
-        out[i] = u32(src[i])
-    }
-}
-
-load_glb_asset :: proc(allocator: mem.Allocator, glb_asset: ^GLTF_Asset) {
-    for mesh in glb_asset.meshes {
-        game_mesh: Game_Mesh
-        game_mesh.name = mesh.name
-        game_mesh.primitives = make([]Game_Mesh_Primitive, len(mesh.primitives))
-        defer delete(game_mesh.primitives)
         for primitive, index in mesh.primitives {
             game_primitive := &game_mesh.primitives[index]
-            game_primitive.topology = primitive.mode
+
+            switch primitive.mode {
+                case .Point:                         game_primitive.topology = .Point
+                case .Line:                          game_primitive.topology = .Line
+                case .Line_Loop, .Line_Strip:        game_primitive.topology = .Line_Strip
+                case .Triangles:                     game_primitive.topology = .Triangle
+                case .Triangle_Strip, .Triangle_Fan: game_primitive.topology = .Triangle_Strip
+            }
+
             indices, ok := primitive.indices.?
             if ok {
-                accessor := glb_asset.accessors[indices]
+                accessor := gltf_asset.accessors[indices]
                 assert(accessor.type == "SCALAR")
 
-                bufferview := glb_asset.bufferViews[accessor.bufferView]
-                pointer := cast([^]byte)glb_asset.buffers[bufferview.buffer].memory
-                start := pointer[bufferview.byteOffset + accessor.byteOffset:]
+                bufferview := gltf_asset.bufferViews[accessor.bufferView]
+                pointer := raw_data(gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:])
                 
                 game_primitive.indices = make([]u32, accessor.count)
                 switch accessor.componentType {
-                    case .S8:  widen_to_u32(game_primitive.indices, ([^]i8)(start), accessor.count)
-                    case .U8:  widen_to_u32(game_primitive.indices, ([^]u8)(start), accessor.count)
-                    case .S16: widen_to_u32(game_primitive.indices, ([^]i16)(start), accessor.count)
-                    case .U16: widen_to_u32(game_primitive.indices, ([^]u16)(start), accessor.count)
-                    case .U32: copy(game_primitive.indices, ([^]u32)(start)[:accessor.count])
+                    case .S8:  widen_to_u32(game_primitive.indices, cast([^]i8)pointer, accessor.count)
+                    case .U8:  widen_to_u32(game_primitive.indices, cast([^]u8)pointer, accessor.count)
+                    case .S16: widen_to_u32(game_primitive.indices, cast([^]i16)pointer, accessor.count)
+                    case .U16: widen_to_u32(game_primitive.indices, cast([^]u16)pointer, accessor.count)
+                    case .U32: copy(game_primitive.indices, ([^]u32)(pointer)[:accessor.count])
                     case .F32: log.fatal("Invalid type f32 for mesh indices")
                 }
             }
             
             for key, value in primitive.attributes {
-                accessor := glb_asset.accessors[value]
+                accessor := gltf_asset.accessors[value]
 
                 switch key {
                     case "POSITION", "NORMAL": assert(accessor.componentType == .F32 && accessor.type == "VEC3")
@@ -252,9 +253,8 @@ load_glb_asset :: proc(allocator: mem.Allocator, glb_asset: ^GLTF_Asset) {
                         continue
                 }
                 
-                bufferview := glb_asset.bufferViews[accessor.bufferView]
-                pointer := cast([^]byte)glb_asset.buffers[bufferview.buffer].memory
-                src := pointer[bufferview.byteOffset + accessor.byteOffset:]
+                bufferview := gltf_asset.bufferViews[accessor.bufferView]
+                pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:]
 
                 n_components := get_accessor_type_components(accessor.type)
                 byte_stride: int
@@ -266,7 +266,7 @@ load_glb_asset :: proc(allocator: mem.Allocator, glb_asset: ^GLTF_Asset) {
                 if key == "POSITION" {
                     game_primitive.positions = make([]Vertex_Position, accessor.count)
                     for i in 0..<accessor.count {
-                        vector := cast([^]f32)src[i*byte_stride:]
+                        vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
                         game_primitive.positions[i] = { vector[0], vector[1], vector[2] }
                     }
                 }
@@ -278,38 +278,53 @@ load_glb_asset :: proc(allocator: mem.Allocator, glb_asset: ^GLTF_Asset) {
                     switch {
                         case key == "NORMAL": 
                             for i in 0..<accessor.count {
-                                vector := cast([^]f32)src[i*byte_stride:]
+                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
                                 game_primitive.attributes[i].normal  = { vector[0], vector[1], vector[2] }
                             }
                         case key == "TEXCOORD_0":
                             for i in 0..<accessor.count {
-                                vector := cast([^]f32)src[i*byte_stride:]
+                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
                                 game_primitive.attributes[i].texture = { vector[0], vector[1] }
                             }
                         case key == "COLOR_0":
                             for i in 0..<accessor.count {
-                                vector := cast([^]f32)src[i*byte_stride:]
+                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
                                 game_primitive.attributes[i].color   = { vector[0], vector[1], vector[2], vector[3] }
                             }
                     }
                 }
             }
         }
-        serialize_mesh(allocator, game_mesh)
-        for game_primitive in game_mesh.primitives {
-            delete(game_primitive.indices)
-            delete(game_primitive.attributes)
-        }
+        append(&load_context.meshes, game_mesh)
     }
 
-    for material in glb_asset.materials {
-        game_material := Game_Material{
-            name = material.name,
-            base_color = material.pbrMetallicRoughness.baseColorFactor,
+    // Load materials
+    for material in gltf_asset.materials {
+        append(&load_context.materials, Material{
+            name        = material.name,
+            base_color  = material.pbrMetallicRoughness.baseColorFactor,
             metallicity = material.pbrMetallicRoughness.metallicFactor,
-            roughness = material.pbrMetallicRoughness.roughnessFactor,
-        }
-        
-        serialize_material(allocator, game_material)
+            roughness   = material.pbrMetallicRoughness.roughnessFactor,
+        })
     }
+
+    // Load images
+    for gltf_image in gltf_asset.images {
+        bufferview := gltf_asset.bufferViews[gltf_image.bufferView]
+        pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset:]
+        image: ^img.Image
+        error: img.Error
+        switch gltf_image.mimeType {
+            case "image/jpeg":
+                image, error = jpeg.load_from_bytes(pointer)
+            case "image/png":
+                image, error = png.load_from_bytes(pointer)
+            case:
+                log.warn("Skipping unknown image mime type", gltf_image.mimeType)
+                continue
+        }
+        append(&load_context.images, image)
+    }
+
+    vmem.arena_destroy(&arena)
 }

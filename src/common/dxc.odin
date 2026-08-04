@@ -31,7 +31,7 @@ shader_target := [Shader_Type]w32.wstring {
     .Library =  "lib_6_0",
 }
 
-Shader_Id :: enum {
+Shader_ID :: enum {
     None,
     Vertex_Screen,
     Vertex_Passthrough,
@@ -40,7 +40,7 @@ Shader_Id :: enum {
     Pixel_Mesh,
 }
 
-get_shader_path :: proc(id: Shader_Id) -> string {
+get_shader_path :: proc(id: Shader_ID) -> string {
     switch id {
         case .None:               return ""
         case .Vertex_Screen:      return "file/shader/HLSL/vertex/screen.vsh"
@@ -52,17 +52,17 @@ get_shader_path :: proc(id: Shader_Id) -> string {
     return ""
 }
 
-Shader_Pipeline_Id :: enum {
+Shader_Pipeline_ID :: enum {
     Test_Pipeline,
     Mesh_Pipeline,
 }
 
 Shader_Pipeline_Entry :: struct {
     primitive:      d3d12.PRIMITIVE_TOPOLOGY_TYPE,
-    stage:          [Shader_Type]Shader_Id,
+    stage:          [Shader_Type]Shader_ID,
 }
 
-shader_pipeline_entries := [Shader_Pipeline_Id]Shader_Pipeline_Entry {
+shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
     .Test_Pipeline = {
         primitive = .TRIANGLE,
         stage = {
@@ -125,14 +125,14 @@ Material_Constant_Buffer :: struct #align(16) {
     roughness: f32,
 }
 
-Constant_Buffer_Id :: enum {
+Constant_Buffer_ID :: enum {
     Global,
     Light,
     Material,
     Transform,
 }
 
-constant_buffer_types := [Constant_Buffer_Id]typeid{
+constant_buffer_types := [Constant_Buffer_ID]typeid{
     .Global = Global_Constant_Buffer,
     .Light = Light_Constant_Buffer,
     .Material = Material_Constant_Buffer,
@@ -150,7 +150,7 @@ set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
 }
 
 DXC_Shader :: struct {
-    id:                Shader_Id,
+    id:                Shader_ID,
     path:              string,
     type:              Shader_Type,
     last_modification: time.Time,
@@ -177,7 +177,7 @@ initialize_shader_compiler :: proc(compiler: ^DXC_Compiler) {
     if hr < 0 do log.fatal("Failed to create DirectX compiler include handler")
 }
 
-initialize_shader :: proc(id: Shader_Id, shader_list: ^[Shader_Id]DXC_Shader) {
+initialize_shader :: proc(id: Shader_ID, shader_list: ^[Shader_ID]DXC_Shader) {
     shader := &shader_list[id]
     shader.id = id
     shader.path = strings.clone(get_shader_path(id))
@@ -369,7 +369,7 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
 }
 
 create_root_signature :: proc(renderer: ^Renderer_Context) {
-    #assert(len(Constant_Buffer_Id) == 4)
+    #assert(len(Constant_Buffer_ID) == 4)
     root_params: [4]d3d12.ROOT_PARAMETER
 
     for &param, id in root_params {
@@ -403,7 +403,7 @@ create_root_signature :: proc(renderer: ^Renderer_Context) {
     defer signature_blob->Release()
 }
 
-initialize_pipeline :: proc(id: Shader_Pipeline_Id, renderer: ^Renderer_Context) {
+initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context) {
     entry := shader_pipeline_entries[id]
     pipeline := &renderer.shader_pipelines[id]
     

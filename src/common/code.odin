@@ -5,13 +5,14 @@ import "core:dynlib"
 import "core:time"
 import "core:io"
 import "core:log"
+import "../asset"
 
 
 Game_Memory :: struct {
     input:         Input_Context,
     renderer:      Renderer_Context,
     render_group:  Render_Group,
-    asset_manager: Game_Asset_Manager,
+    asset_manager: asset.Manager,
     code:          Game_Code,
     time:          f32,
     delta_time:    f32,

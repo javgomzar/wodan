@@ -5,6 +5,7 @@ import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import "core:mem"
 import "core:log"
+import "../asset"
 
 
 when ODIN_OS == .Windows {
@@ -17,15 +18,13 @@ D3D12_Frame_Context :: struct {
     fence_value:   u64,
 }
 
-D3D12_get_primitive_topology :: proc(primitive: Primitive) -> d3d12.PRIMITIVE_TOPOLOGY {
+D3D12_get_primitive_topology :: proc(primitive: asset.Topology) -> d3d12.PRIMITIVE_TOPOLOGY {
     switch primitive {
         case .Point:          return .POINTLIST
-        case .Lines:          return .LINELIST
-        case .Line_Loop:      return .LINESTRIP
+        case .Line:           return .LINELIST
         case .Line_Strip:     return .LINESTRIP
-        case .Triangles:      return .TRIANGLELIST
+        case .Triangle:       return .TRIANGLELIST
         case .Triangle_Strip: return .TRIANGLESTRIP
-        case .Triangle_Fan:   return .TRIANGLESTRIP
         case:
             log.fatal("Invalid primitive topology", primitive)
     }
@@ -53,14 +52,14 @@ Renderer_Context :: struct {
     index_buffer:        ^d3d12.IResource,
     root_signature:      ^d3d12.IRootSignature,
     shader_compiler:     DXC_Compiler,
-    shaders:             [Shader_Id]DXC_Shader,
-    shader_pipelines:    [Shader_Pipeline_Id]^d3d12.IPipelineState,
-    constant_buffers:    [N_BACK_BUFFERS][Constant_Buffer_Id]Constant_Buffer,
+    shaders:             [Shader_ID]DXC_Shader,
+    shader_pipelines:    [Shader_Pipeline_ID]^d3d12.IPipelineState,
+    constant_buffers:    [N_BACK_BUFFERS][Constant_Buffer_ID]Constant_Buffer,
 }
 
 EVENT_ALL_ACCESS :: w32.DWORD(0x1F0003)
 
-initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Renderer_Context, width: u32, height: u32) {
+initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_Context, width: u32, height: u32) {
     hr: w32.HRESULT
     renderer.window = w32.GetActiveWindow()
 
@@ -295,8 +294,8 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
         }
     }
 
-    renderer.position_buffer = create_buffer(renderer.device, position_count * size_of(Vertex_Position))
-    renderer.attribute_buffer = create_buffer(renderer.device, attribute_count * size_of(Vertex_Attributes))
+    renderer.position_buffer = create_buffer(renderer.device, position_count * size_of(asset.Vertex_Position))
+    renderer.attribute_buffer = create_buffer(renderer.device, attribute_count * size_of(asset.Vertex_Attributes))
     renderer.index_buffer = create_buffer(renderer.device, index_count * size_of(u32))
 
     mapped_position: rawptr = nil
@@ -311,16 +310,16 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
     position_offset: int
     attribute_offset: int
     index_offset: int
-    position_ptr := cast([^]Vertex_Position)mapped_position
-    attribute_ptr := cast([^]Vertex_Attributes)mapped_attribute
+    position_ptr := cast([^]asset.Vertex_Position)mapped_position
+    attribute_ptr := cast([^]asset.Vertex_Attributes)mapped_attribute
     index_ptr := cast([^]u32)mapped_index
 
     // RGB triangle
-    copy(position_ptr[:3], triangle_positions[:])
+    copy(position_ptr[:3], asset.triangle_positions[:])
     position_ptr = position_ptr[3:]
     position_offset += 3
 
-    copy(attribute_ptr[:3], triangle_attributes[:])
+    copy(attribute_ptr[:3], asset.triangle_attributes[:])
     attribute_ptr = attribute_ptr[3:]
     attribute_offset += 3
 
@@ -358,7 +357,7 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
 
     // Constant buffers
     for i in 0..<N_BACK_BUFFERS {
-        for id in Constant_Buffer_Id {
+        for id in Constant_Buffer_ID {
             constant_buffer := &renderer.constant_buffers[i][id]
             constant_buffer.type = constant_buffer_types[id]
             size := mem.align_forward_int(size_of(constant_buffer.type), 256)
@@ -371,7 +370,7 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
     // Shaders
     initialize_shader_compiler(&renderer.shader_compiler)
 
-    for id in Shader_Id {
+    for id in Shader_ID {
         if id == .None do continue
         initialize_shader(id, &renderer.shaders)
         compile_shader(&renderer.shader_compiler, &renderer.shaders[id])
@@ -379,7 +378,7 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
 
     // Pipelines
     create_root_signature(renderer)
-    for id in Shader_Pipeline_Id {
+    for id in Shader_Pipeline_ID {
         initialize_pipeline(id, renderer)
     }
 
@@ -387,6 +386,8 @@ initialize_renderer :: proc(asset_manager: ^Game_Asset_Manager, renderer: ^Rende
 }
 
 create_buffer :: proc(device: ^d3d12.IDevice, size: u32, memory: rawptr = nil) -> ^d3d12.IResource {
+    assert(size > 0)
+
     properties := d3d12.HEAP_PROPERTIES{
         Type = .UPLOAD,
         CPUPageProperty = .UNKNOWN,
@@ -441,8 +442,8 @@ render :: proc(memory: ^Game_Memory) {
     frame_context := &renderer.frame_context[frame_index]
 
     // Shader hot-reloading
-    updated: [Shader_Id]bool
-    for id in Shader_Id {
+    updated: [Shader_ID]bool
+    for id in Shader_ID {
         if id == .None do continue
         updated[id] = update_if_newer_shader(&renderer.shader_compiler, &renderer.shaders[id])
     }
@@ -559,23 +560,25 @@ render :: proc(memory: ^Game_Memory) {
 
                 // renderer.command_list->SetGraphicsRootConstantBufferView(0, renderer.global_buffers[frame_index]->GetGPUVirtualAddress())
                 renderer.command_list->SetPipelineState(pipeline)
-                primitive := D3D12_get_primitive_topology(entry.primitive)
-                renderer.command_list->IASetPrimitiveTopology(primitive)
+                topology := D3D12_get_primitive_topology(entry.topology)
+                renderer.command_list->IASetPrimitiveTopology(topology)
                 
-                n_buffers: u32 = 1
                 vertex_buffers := []d3d12.VERTEX_BUFFER_VIEW{
                     {
-                        BufferLocation = renderer.position_buffer->GetGPUVirtualAddress() + u64(entry.position_offset * size_of(Vertex_Position)),
-                        SizeInBytes = u32(entry.position_count * size_of(Vertex_Position)),
-                        StrideInBytes = size_of(Vertex_Position),
+                        BufferLocation = renderer.position_buffer->GetGPUVirtualAddress() + 
+                        u64(entry.position_offset * size_of(asset.Vertex_Position)),
+                        SizeInBytes = u32(entry.position_count * size_of(asset.Vertex_Position)),
+                        StrideInBytes = size_of(asset.Vertex_Position),
                     },
                     {
-                        BufferLocation = renderer.attribute_buffer->GetGPUVirtualAddress() + u64(entry.attribute_offset * size_of(Vertex_Attributes)),
-                        SizeInBytes = u32(entry.attribute_count * size_of(Vertex_Attributes)),
-                        StrideInBytes = size_of(Vertex_Attributes),
-                    },
-                }
-
+                        BufferLocation = renderer.attribute_buffer->GetGPUVirtualAddress() + 
+                            u64(entry.attribute_offset * size_of(asset.Vertex_Attributes)),
+                            SizeInBytes = u32(entry.attribute_count * size_of(asset.Vertex_Attributes)),
+                            StrideInBytes = size_of(asset.Vertex_Attributes),
+                        },
+                    }
+                
+                n_buffers: u32 = 1
                 if entry.attribute_count > 0 {
                     n_buffers = 2
                 }

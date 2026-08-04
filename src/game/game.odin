@@ -2,10 +2,25 @@ package game
 
 import "core:math"
 import "../common"
+import "../asset"
 
 @(export)
 initialize_game_state :: proc(memory: ^common.Game_Memory) {
-    common.initialize_asset_manager(&memory.asset_manager)
+    asset.initialize_manager(&memory.asset_manager)
+    
+    // Add assets here
+
+    for &game_asset in memory.asset_manager.assets[1:] {
+        if game_asset.processing {
+            asset.import_asset_files(&game_asset)
+            asset.write(&game_asset)
+            game_asset.processing = false
+        }
+        else {
+            asset.load(&game_asset)
+        }
+    }
+
     common.initialize_renderer(&memory.asset_manager, &memory.renderer, memory.render_group.width, memory.render_group.height)
     memory.initialized = true
 }
