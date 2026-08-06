@@ -125,7 +125,7 @@ GLTF_Base_Color_Texture :: struct {
 GLTF_Material :: struct {
     name: string,
     pbrMetallicRoughness: struct {
-        baseColorFactor:  [4]f32,
+        baseColorFactor:  Maybe([4]f32),
         baseColorTexture: Maybe(GLTF_Base_Color_Texture),
         metallicFactor:   f32,
         roughnessFactor:  f32,
@@ -295,15 +295,24 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
                     }
                 }
             }
+
+            _, ok := primitive.attributes["COLOR_0"]
+            if !ok {
+                for &attribute in game_primitive.attributes {
+                    attribute.color = {1, 1, 1, 1}
+                }
+            }
         }
         append(&load_context.meshes, game_mesh)
     }
 
     // Load materials
     for material in gltf_asset.materials {
+        base_color, ok := material.pbrMetallicRoughness.baseColorFactor.?
+        if !ok do base_color = {1, 1, 1, 1}
         append(&load_context.materials, Material{
             name       = material.name,
-            base_color = material.pbrMetallicRoughness.baseColorFactor,
+            base_color = base_color,
             metallic   = material.pbrMetallicRoughness.metallicFactor,
             roughness  = material.pbrMetallicRoughness.roughnessFactor,
         })
@@ -324,7 +333,7 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
                 log.warn("Skipping unknown image mime type", gltf_image.mimeType)
                 continue
         }
-        append(&load_context.images, image)
+        append(&load_context.textures, Texture{ image = image, })
     }
 
     vmem.arena_destroy(&arena)

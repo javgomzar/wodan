@@ -5,11 +5,12 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
+import img "core:image"
 import "../asset"
 
 
 Camera :: struct {
-    position: [3]f32,
+    position: linalg.Vector3f32,
     angle:    f32,
     pitch:    f32,
     distance: f32,
@@ -87,6 +88,7 @@ Render_Entry :: struct {
     transform:        matrix[4, 4]f32,
     pipeline:         Shader_Pipeline_ID,
     material:         ^asset.Material,
+    texture:          ^asset.Texture,
     color:            [4]f32,
 }
 
@@ -131,8 +133,9 @@ push_clear :: proc(group: ^Render_Group, color: [3]f32) {
 push_mesh :: proc(
     group:       ^Render_Group,
     mesh:        ^asset.Mesh,
-    material:    ^asset.Material,
     pipeline:    Shader_Pipeline_ID,
+    material:    ^asset.Material = nil,
+    texture:     ^asset.Texture = nil,
     translation: linalg.Vector3f32 = 0,
     rotation:    linalg.Quaternionf32 = 1,
     scale:       linalg.Vector3f32 = 1,
@@ -143,6 +146,7 @@ push_mesh :: proc(
             type = .Mesh,
             transform = linalg.matrix4_from_trs_f32(translation, rotation, scale),
             material = material,
+            texture = texture,
             topology = primitive.topology,
             pipeline = pipeline,
             index_count = len(primitive.indices),

@@ -53,7 +53,7 @@ test_asset_loading :: proc(manager: ^asset.Manager, path: string, import_files: 
 
     assert(len(test_asset.meshes) == len(loaded_asset.meshes))
     assert(len(test_asset.materials) == len(loaded_asset.materials))
-    assert(len(test_asset.images) == len(loaded_asset.images))
+    assert(len(test_asset.textures) == len(loaded_asset.textures))
 
     for mesh, m_index in test_asset.meshes {
         loaded_mesh := loaded_asset.meshes[m_index]
@@ -75,8 +75,9 @@ test_asset_loading :: proc(manager: ^asset.Manager, path: string, import_files: 
         assert(material.roughness == loaded_material.roughness)
     }
 
-    for image, i_index in test_asset.images {
-        loaded_image := loaded_asset.images[i_index]
+    for texture, i_index in test_asset.textures {
+        image := texture.image
+        loaded_image := loaded_asset.textures[i_index].image
         assert(image.width == loaded_image.width)
         assert(image.height == loaded_image.height)
         assert(image.depth == loaded_image.depth)

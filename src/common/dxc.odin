@@ -22,13 +22,13 @@ Shader_Type :: enum {
 }
 
 shader_target := [Shader_Type]w32.wstring {
-    .Vertex =   "vs_6_0",
-    .Domain =   "ds_6_0",
-    .Hull =     "hs_6_0",
-    .Geometry = "gs_6_0",
-    .Pixel =    "ps_6_0",
-    .Compute =  "cs_6_0",
-    .Library =  "lib_6_0",
+    .Vertex =   "vs_6_6",
+    .Domain =   "ds_6_6",
+    .Hull =     "hs_6_6",
+    .Geometry = "gs_6_6",
+    .Pixel =    "ps_6_6",
+    .Compute =  "cs_6_6",
+    .Library =  "lib_6_6",
 }
 
 Shader_ID :: enum {
@@ -135,11 +135,12 @@ set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
 }
 
 Per_Draw_Data :: struct #align(256) {
-    transform:      matrix[4, 4]f32,
-    normal:         matrix[4, 4]f32,
-    material_color: [4]f32,
-    metallic:       f32,
-    roughness:      f32,
+    transform:           matrix[4, 4]f32,
+    normal:              matrix[4, 4]f32,
+    material_color:      [4]f32,
+    metallic:            f32,
+    roughness:           f32,
+    color_texture_index: u32,
 }
 
 DXC_Shader :: struct {
@@ -361,29 +362,77 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
     }
 }
 
-create_root_signature :: proc(renderer: ^Renderer_Context) {
-    #assert(len(Constant_Buffer_ID) == 2)
-    root_params: [4]d3d12.ROOT_PARAMETER
+create_root_signature :: proc(renderer: ^Renderer_Context, n_textures: u32) {
+    srv_range := []d3d12.DESCRIPTOR_RANGE{
+        {
+            RangeType = .SRV,
+            NumDescriptors = n_textures,
+            BaseShaderRegister = 0,
+            RegisterSpace = 0,
+            OffsetInDescriptorsFromTableStart = d3d12.DESCRIPTOR_RANGE_OFFSET_APPEND,
+        },
+    }
 
-    for &param, id in root_params {
-        param = {
+    static_sampler := []d3d12.STATIC_SAMPLER_DESC{
+        {
+            Filter = .MIN_MAG_MIP_LINEAR,
+            AddressU = .WRAP,
+            AddressV = .WRAP,
+            AddressW = .WRAP,
+            ComparisonFunc = .NEVER,
+            MinLOD = 0.0,
+            MaxLOD = d3d12.FLOAT32_MAX,
+            ShaderRegister = 0,
+            RegisterSpace = 0,
+            ShaderVisibility = .PIXEL,
+        },
+    }
+
+    root_params: []d3d12.ROOT_PARAMETER1 = {
+        {   // Globals
             ParameterType = .CBV,
             Descriptor = {
                 RegisterSpace = 0,
-                ShaderRegister = u32(id),
+                ShaderRegister = 0,
             },
             ShaderVisibility = .ALL,
-        }
+        },
+        {   // Light
+            ParameterType = .CBV,
+            Descriptor = {
+                RegisterSpace = 0,
+                ShaderRegister = 1,
+            },
+            ShaderVisibility = .ALL,
+        },
+        {
+            // Per draw data
+            ParameterType = .CBV,
+            Descriptor = {
+                RegisterSpace = 0,
+                ShaderRegister = 2,
+            },
+            ShaderVisibility = .ALL,
+        },
     }
 
-    root_signature_desc := d3d12.ROOT_SIGNATURE_DESC{
-        NumParameters = len(root_params),
-        pParameters = &root_params[0],
-        Flags = {.ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT},
+    root_signature_desc := d3d12.VERSIONED_ROOT_SIGNATURE_DESC{
+        Version = ._1_1,
+        Desc_1_1 = {
+            NumParameters = u32(len(root_params)),
+            pParameters = &root_params[0],
+            NumStaticSamplers = u32(len(static_sampler)),
+            pStaticSamplers = &static_sampler[0],
+            Flags = {
+                .ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT,
+                .CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED,
+                .SAMPLER_HEAP_DIRECTLY_INDEXED,
+            }
+        },
     }
 
     signature_blob, error: ^d3d12.IBlob
-    hr := d3d12.SerializeRootSignature(&root_signature_desc, ._1, &signature_blob, &error)
+    hr := d3d12.SerializeVersionedRootSignature(&root_signature_desc, &signature_blob, &error)
     if hr < 0 do log.fatal("Failed to serialize D3D12 root signature")
     hr = renderer.device->CreateRootSignature(
         0, 
@@ -420,7 +469,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
         InputLayout = input_layout,
         PrimitiveTopologyType = entry.primitive,
         NumRenderTargets = 1,
-        DSVFormat = .UNKNOWN,
+        DSVFormat = .D24_UNORM_S8_UINT,
         SampleMask = max(u32),
         SampleDesc = { Count = 1, Quality = 0, },
         NodeMask = 0,
@@ -430,8 +479,10 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
             IndependentBlendEnable = w32.FALSE,
         },
         DepthStencilState = {
-            DepthEnable = w32.FALSE,
+            DepthEnable = w32.TRUE,
             StencilEnable = w32.FALSE,
+            DepthWriteMask = .ALL,
+            DepthFunc = .LESS,
         },
         RasterizerState = {
             FillMode = .SOLID,

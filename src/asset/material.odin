@@ -5,10 +5,11 @@ import "core:slice"
 
 
 Material :: struct {
-    name: string,
-    base_color: [4]f32,
-    metallic: f32,
-    roughness: f32,
+    name:          string,
+    base_color:    [4]f32,
+    metallic:      f32,
+    roughness:     f32,
+    color_texture: Maybe(Texture),
 }
 
 get_serialized_size_material :: proc(material: Material) -> int {

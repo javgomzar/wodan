@@ -42,7 +42,13 @@ float4 main(VS_OUT vout): SV_TARGET {
     float3 reflection = reflect(light_direction, n);
     float spec = (1 - roughness) * pow(max(dot(v, reflection), 0), 5);
 
-    float3 result = (ambient + diff) * material_color.rgb + spec * light_color;
+    float4 texture_color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    if (color_texture_index > 0) {
+        Texture2D color_texture = ResourceDescriptorHeap[color_texture_index];
+        texture_color = color_texture.Sample(linear_wrap, vout.texture);
+    }
+    float3 result = (ambient + diff) * material_color.rgb * texture_color.rgb + spec * light_color;
 
+    // return float4(abs(vout.normal), 1.0f)
     return float4(result, 1.0f);
 }

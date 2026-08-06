@@ -28,7 +28,7 @@ File_Header :: struct {
     magic_number:   u32,
     mesh_count:     u32,
     material_count: u32,
-    image_count:    u32,
+    texture_count:  u32,
 }
 
 Asset :: struct {
@@ -37,9 +37,9 @@ Asset :: struct {
     import_files: [dynamic]Import_File,
     meshes:       []Mesh,
     materials:    []Material,
-    images:       []^img.Image,
-    // fonts:        []Game_Font,
-    // text:         []Game_Text,
+    textures:     []Texture,
+    // fonts:        []Font,
+    // text:         []Text,
     processing:   bool,
 }
 
@@ -94,14 +94,14 @@ add_file :: proc(asset: ^Asset, path: string) {
 Load_Context :: struct {
     meshes:    [dynamic]Mesh,
     materials: [dynamic]Material,
-    images:    [dynamic]^img.Image,
+    textures:  [dynamic]Texture,
 }
 
 import_asset_files :: proc(asset: ^Asset) {
     load_context: Load_Context
     defer delete(load_context.meshes)
     defer delete(load_context.materials)
-    defer delete(load_context.images)
+    defer delete(load_context.textures)
 
     for &file in asset.import_files {
         switch file.format {
@@ -109,10 +109,10 @@ import_asset_files :: proc(asset: ^Asset) {
                 import_glb_asset(file.info.fullpath, &load_context)
             case .PNG:
                 image, error := png.load_from_file(file.info.fullpath)
-                append(&load_context.images, image)
+                append(&load_context.textures, Texture{ image = image, })
             case .JPEG:
                 image, error := jpeg.load_from_file(file.info.fullpath)
-                append(&load_context.images, image)
+                append(&load_context.textures, Texture{ image = image, })
             case .WAV:
                 log.fatal("Asset file loading with extension", file.format, "hasn't been implemented yet")
             case:
@@ -126,8 +126,8 @@ import_asset_files :: proc(asset: ^Asset) {
     asset.materials = make([]Material, len(load_context.materials))
     copy(asset.materials, load_context.materials[:])
 
-    asset.images  = make([]^img.Image, len(load_context.images))
-    copy(asset.images, load_context.images[:])
+    asset.textures  = make([]Texture, len(load_context.textures))
+    copy(asset.textures, load_context.textures[:])
 }
 
 write :: proc(asset: ^Asset) {
@@ -141,8 +141,8 @@ write :: proc(asset: ^Asset) {
         total_size += get_serialized_size_material(material)
     }
 
-    for image in asset.images {
-        total_size += get_serialized_size_image(image)
+    for texture in asset.textures {
+        total_size += get_serialized_size_image(texture.image)
     }
 
     block, error := make([]byte, total_size, context.allocator)
@@ -158,7 +158,7 @@ write :: proc(asset: ^Asset) {
         magic_number = 0xffaaaacc,
         mesh_count = u32(len(asset.meshes)),
         material_count = u32(len(asset.materials)),
-        image_count = u32(len(asset.images)),
+        texture_count = u32(len(asset.textures)),
     }
 
     for mesh in asset.meshes {
@@ -169,8 +169,8 @@ write :: proc(asset: ^Asset) {
         serialize_material(allocator, material)
     }
 
-    for image in asset.images {
-        serialize_image(allocator, image)
+    for texture in asset.textures {
+        serialize_image(allocator, texture.image)
     }
 
     assert(arena.offset == int(total_size))
@@ -195,7 +195,7 @@ load :: proc(asset: ^Asset) {
 
     asset.meshes = make([]Mesh, header.mesh_count)
     asset.materials = make([]Material, header.material_count)
-    asset.images = make([]^img.Image, header.image_count)
+    asset.textures = make([]Texture, header.texture_count)
     for &mesh in asset.meshes {
         size: int
         mesh, size = deserialize_mesh(block)
@@ -208,9 +208,9 @@ load :: proc(asset: ^Asset) {
         block = block[size:]
     }
 
-    for &image in asset.images {
-        size: int
-        image, size = deserialize_image(block)
+    for &texture in asset.textures {
+        image, size := deserialize_image(block)
+        texture.image = image
         block = block[size:]
     }
 
@@ -232,10 +232,10 @@ release :: proc(asset: ^Asset) {
     }
     if len(asset.meshes) > 0 do delete(asset.meshes)
     if len(asset.materials) > 0 do delete(asset.materials)
-    for image in asset.images {
-        img.destroy(image)
+    for texture in asset.textures {
+        img.destroy(texture.image)
     }
-    if len(asset.images) > 0 do delete(asset.images)
+    if len(asset.textures) > 0 do delete(asset.textures)
     os.file_info_delete(asset.file_info, context.allocator)
 }
 
@@ -252,7 +252,4 @@ initialize_manager :: proc(manager: ^Manager) {
 
     system_asset := add_asset(manager, "file/asset/system.ass", force_process = true)
     manager.system_asset_id = system_asset.id
-
-    //add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/Box/glTF-Binary/Box.glb")
-    add_file(system_asset, "file/asset/test/RGBTriangle.glb")
 }
