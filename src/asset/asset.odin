@@ -246,10 +246,25 @@ release_assets :: proc(manager: ^Manager) {
     delete(manager.assets)
 }
 
+get_mesh_by_name :: proc(asset: ^Asset, name: string) -> ^Mesh {
+    result: ^Mesh = nil
+    for &mesh in asset.meshes {
+        if mesh.name == name {
+            result = &mesh
+            break
+        }
+    }
+    return result
+}
+
 initialize_manager :: proc(manager: ^Manager) {
     // empty asset for id 0
     add_asset(manager, "")
 
-    system_asset := add_asset(manager, "file/asset/system.ass", force_process = true)
+    system_asset := add_asset(manager, "file/asset/system/system.ass", force_process = true)
     manager.system_asset_id = system_asset.id
+
+    // add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
+    add_file(system_asset, "file/asset/system/grid.glb")
+    add_file(system_asset, "file/asset/system/rgb_triangle.glb")
 }

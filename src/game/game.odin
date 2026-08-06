@@ -1,5 +1,6 @@
 package game
 
+import "core:log"
 import "core:math"
 import "../common"
 import "../asset"
@@ -33,6 +34,7 @@ reload_game_state :: proc(memory: ^common.Game_Memory) {
 update_game_state :: proc(memory: ^common.Game_Memory) {
     render_group := &memory.render_group
     asset_manager := &memory.asset_manager
+    system_asset := &asset_manager.assets[asset_manager.system_asset_id]
     input := &memory.input
 
     // Testing
@@ -41,24 +43,27 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     }
     
     // Main game loop
-    clear_color := [3]f32{0.5 + 0.5*math.sin(f32(memory.renderer.frame) / 100.0), 0.0, 0.5}
+    clear_color := [3]f32{0.3, 0.3, 0.6}
     common.push_clear(render_group, clear_color)
 
     update_camera(&render_group.camera, input)
 
-    mesh := &asset_manager.assets[1].meshes[0]
-    material := &asset_manager.assets[1].materials[0]
-    texture := &asset_manager.assets[1].textures[0]
+    if input.keyboard.key[.F1].just_pressed {
+        memory.debug = !memory.debug
+        if memory.debug do log.debug("Debug mode on")
+    }
 
-    common.push_mesh(
-        render_group, 
-        mesh, 
-        material = material, 
-        texture = texture,
-        pipeline = .Mesh_Pipeline, 
-        translation = {0, 0, 0},
-        scale = {1, -1, 1},
-    )
+    if memory.debug {
+        grid := asset.get_mesh_by_name(system_asset, "Grid")
+        material := &asset_manager.assets[1].materials[0]
+        common.push_mesh(
+            render_group, 
+            grid, 
+            material = material,
+            pipeline = .Mesh_Pipeline,
+            scale = {10, 10, 10}
+        )
+    }
 
     common.render(memory)
 }

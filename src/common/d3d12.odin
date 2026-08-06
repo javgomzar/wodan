@@ -768,7 +768,7 @@ render :: proc(memory: ^Game_Memory) {
     // Global constant buffer
     global_cb := Global_Constant_Buffer{
         projection = get_projection_matrix(f32(group.width), f32(group.height)),
-        view = get_view_matrix(get_camera_basis(group.camera.angle, group.camera.pitch), group.camera.distance, group.camera.position),
+        view = get_view_matrix(group.camera.angle, group.camera.pitch, group.camera.distance, group.camera.position),
         resolution = {f32(group.width), f32(group.height)},
         mouse = input.mouse.cursor,
         last_mouse = input.mouse.last_cursor,

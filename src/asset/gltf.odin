@@ -2,6 +2,7 @@ package asset
 
 import "core:os"
 import "core:log"
+import "core:strings"
 import vmem "core:mem/virtual"
 import img "core:image"
 import "core:image/png"
@@ -207,7 +208,7 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
     // Load meshes
     for mesh in gltf_asset.meshes {
         game_mesh := Mesh{
-            name = mesh.name,
+            name = strings.clone(mesh.name),
             primitives = make([]Primitive, len(mesh.primitives)),
         }
 
@@ -311,7 +312,7 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
         base_color, ok := material.pbrMetallicRoughness.baseColorFactor.?
         if !ok do base_color = {1, 1, 1, 1}
         append(&load_context.materials, Material{
-            name       = material.name,
+            name       = strings.clone(material.name),
             base_color = base_color,
             metallic   = material.pbrMetallicRoughness.metallicFactor,
             roughness  = material.pbrMetallicRoughness.roughnessFactor,

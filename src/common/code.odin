@@ -19,6 +19,7 @@ Game_Memory :: struct {
     initialized:   bool,
     running:       bool,
     testing:       bool,
+    debug:         bool,
 }
 
 Game_Code :: struct {

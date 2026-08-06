@@ -1,3 +1,5 @@
+#include "common.hlsli"
+
 struct VS_OUT {
     float4 sv_position: SV_POSITION;
     float3 position: POSITION;
@@ -7,7 +9,5 @@ struct VS_OUT {
 };
 
 float4 main(VS_OUT vout): SV_TARGET {
-    float4 color = vout.color;
-    
-    return color;
+    return material_color;
 }

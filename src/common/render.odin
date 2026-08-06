@@ -5,7 +5,6 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
-import img "core:image"
 import "../asset"
 
 
@@ -37,10 +36,11 @@ get_camera_basis :: proc(angle: f32, pitch: f32) -> matrix[3, 3]f32 {
     }
 }
 
-get_view_matrix :: proc(basis: matrix[3, 3]f32, distance: f32, position: [3]f32) -> matrix[4, 4]f32 {
+get_view_matrix :: proc(angle: f32, pitch: f32, distance: f32, position: [3]f32) -> matrix[4, 4]f32 {
+    basis := get_camera_basis(angle, pitch)
     t_basis := linalg.transpose(basis)
 
-    translation := [3]f32{0, 0, distance} - position * basis
+    translation := [3]f32{0, 0, distance} - basis * position
     result := linalg.matrix4_from_matrix3(t_basis)
     result[3, 0] = translation.x
     result[3, 1] = translation.y

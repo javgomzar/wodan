@@ -27,7 +27,7 @@ cbuffer PerDrawData: register(b2) {
     float metallic;
     float roughness;
     int color_texture_index;
-}
+};
 
 sampler linear_wrap: register(s0);
 

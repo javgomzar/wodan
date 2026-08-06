@@ -53,7 +53,7 @@ get_shader_path :: proc(id: Shader_ID) -> string {
 }
 
 Shader_Pipeline_ID :: enum {
-    Test_Pipeline,
+    Grid_Pipeline,
     Mesh_Pipeline,
 }
 
@@ -63,8 +63,8 @@ Shader_Pipeline_Entry :: struct {
 }
 
 shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
-    .Test_Pipeline = {
-        primitive = .TRIANGLE,
+    .Grid_Pipeline = {
+        primitive = .LINE,
         stage = {
             .Vertex =   .Vertex_Mesh,
             .Domain =   .None,
