@@ -471,7 +471,10 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
         NumRenderTargets = 1,
         DSVFormat = .D24_UNORM_S8_UINT,
         SampleMask = max(u32),
-        SampleDesc = { Count = 1, Quality = 0, },
+        SampleDesc = {
+            Count = N_MSAA_SAMPLES, 
+            Quality = 0,
+        },
         NodeMask = 0,
         pRootSignature = renderer.root_signature,
         BlendState = {
@@ -492,8 +495,8 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
             DepthBiasClamp = d3d12.DEFAULT_DEPTH_BIAS_CLAMP,
             SlopeScaledDepthBias = d3d12.DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
             DepthClipEnable = w32.TRUE,
-            MultisampleEnable = w32.FALSE,
-            AntialiasedLineEnable = w32.FALSE,
+            MultisampleEnable = w32.TRUE,
+            AntialiasedLineEnable = w32.TRUE,
             ForcedSampleCount = 0,
             ConservativeRaster = .OFF,
         },

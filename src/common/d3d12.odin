@@ -12,7 +12,7 @@ import "../asset"
 when ODIN_OS == .Windows {
 
 N_BACK_BUFFERS  :: 3
-N_DEPTH_BUFFERS :: 1
+N_MSAA_SAMPLES  :: 4
 
 D3D12_Frame_Context :: struct {
     command_alloc: ^d3d12.ICommandAllocator,
@@ -63,6 +63,33 @@ get_descriptor_heap_element :: proc(heap: ^D3D12_Descriptor_Heap, index: uint) -
     return handle
 }
 
+create_render_target_views :: proc(renderer: ^Renderer_Context) {
+    rtv_handle, dsv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
+    renderer.rtv_heap.heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
+    renderer.dsv_heap.heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
+    
+    // MSAA target
+    renderer.device->CreateRenderTargetView(renderer.msaa_target, nil, rtv_handle)
+    rtv_handle.ptr += uint(renderer.rtv_heap.descriptor_size)
+    renderer.rtv_heap.descriptor_count += 1
+    
+    renderer.device->CreateDepthStencilView(renderer.msaa_depth_stencil, nil, dsv_handle)
+    dsv_handle.ptr += uint(renderer.dsv_heap.descriptor_size)
+    renderer.dsv_heap.descriptor_count += 1
+
+    for i in 0..<N_BACK_BUFFERS {
+        hr := renderer.swap_chain->GetBuffer(u32(i), d3d12.IResource_UUID, (^rawptr)(&renderer.render_targets[i]))
+        if hr < 0 do log.fatal("Failed to get swap chain buffers")
+        renderer.device->CreateRenderTargetView(renderer.render_targets[i], nil, rtv_handle)
+        rtv_handle.ptr += uint(renderer.rtv_heap.descriptor_size)
+        renderer.rtv_heap.descriptor_count += 1
+    }
+
+    renderer.device->CreateDepthStencilView(renderer.depth_stencil, nil, dsv_handle)
+    dsv_handle.ptr += uint(renderer.dsv_heap.descriptor_size)
+    renderer.dsv_heap.descriptor_count += 1
+}
+
 Renderer_Context :: struct {
     frame:               u64,
     window:              w32.HWND,
@@ -70,6 +97,8 @@ Renderer_Context :: struct {
     fence:               ^d3d12.IFence,
     fence_event:         w32.HANDLE,
     swap_chain:          ^dxgi.ISwapChain1,
+    viewport:            d3d12.VIEWPORT,
+    scissor_rect:        d3d12.RECT,
     command_queue:       ^d3d12.ICommandQueue,
     command_list:        ^d3d12.IGraphicsCommandList,
     frame_context:       [N_BACK_BUFFERS]D3D12_Frame_Context,
@@ -78,7 +107,9 @@ Renderer_Context :: struct {
     srv_heap:            D3D12_Descriptor_Heap,
     sampler_heap:        D3D12_Descriptor_Heap,
     render_targets:      [N_BACK_BUFFERS]^d3d12.IResource,
-    depth_stencils:      [N_DEPTH_BUFFERS]^d3d12.IResource,
+    depth_stencil:       ^d3d12.IResource,
+    msaa_target:         ^d3d12.IResource,
+    msaa_depth_stencil:  ^d3d12.IResource,
     position_buffer:     ^d3d12.IResource,
     attribute_buffer:    ^d3d12.IResource,
     index_buffer:        ^d3d12.IResource,
@@ -212,6 +243,22 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
     output_desc: dxgi.OUTPUT_DESC
     output->GetDesc(&output_desc)
 
+    renderer.viewport = {
+        TopLeftX = 0.0,
+        TopLeftY = 0.0,
+        Width = f32(width),
+        Height = f32(height),
+        MinDepth = 0.0,
+        MaxDepth = 1.0
+    }
+
+    renderer.scissor_rect = {
+        left = 0,
+        top = 0,
+        right = i32(width),
+        bottom = i32(height),
+    }
+
     // n_modes: u32
     // output->GetDisplayModeList(.R8G8B8A8_UNORM, {}, &n_modes, nil)
     // modes := make([]dxgi.MODE_DESC, n_modes)
@@ -223,7 +270,7 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
 
     // Render target views
     rtv_heap_desc := d3d12.DESCRIPTOR_HEAP_DESC{
-        NumDescriptors = N_BACK_BUFFERS,
+        NumDescriptors = N_BACK_BUFFERS + 1,
         Type           = .RTV,
         Flags          = {},
     }
@@ -235,19 +282,9 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
     if hr < 0 do log.fatal("Failed to create RTV descriptor heap")
     renderer.rtv_heap.descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.RTV)
 
-    rtv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-    renderer.rtv_heap.heap->GetCPUDescriptorHandleForHeapStart(&rtv_handle)
-    for i in 0..<N_BACK_BUFFERS {
-        hr = renderer.swap_chain->GetBuffer(u32(i), d3d12.IResource_UUID, (^rawptr)(&renderer.render_targets[i]))
-        if hr < 0 do log.fatal("Failed to get swap chain buffers")
-        renderer.device->CreateRenderTargetView(renderer.render_targets[i], nil, rtv_handle)
-        renderer.rtv_heap.descriptor_count += 1
-        rtv_handle.ptr += uint(renderer.rtv_heap.descriptor_size)
-    }
-
     // Depth-stencil views
     dsv_heap_desc := d3d12.DESCRIPTOR_HEAP_DESC{
-        NumDescriptors = N_DEPTH_BUFFERS,
+        NumDescriptors = 2,
         Type           = .DSV,
         Flags          = {},
     }
@@ -259,49 +296,106 @@ initialize_renderer :: proc(asset_manager: ^asset.Manager, renderer: ^Renderer_C
     if hr < 0 do log.fatal("Failed to create DSV descriptor heap")
     renderer.dsv_heap.descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.DSV)
 
-    dsv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
-    renderer.dsv_heap.heap->GetCPUDescriptorHandleForHeapStart(&dsv_handle)
-    for i in 0..<N_DEPTH_BUFFERS {
-        resource_desc := d3d12.RESOURCE_DESC{
-            Dimension = .TEXTURE2D,
-            Alignment = 0,
-            Width = u64(width),
-            Height = height,
-            DepthOrArraySize = 1,
-            MipLevels = 1,
-            Format = .D24_UNORM_S8_UINT,
-            SampleDesc = {
-                Count = 1,
-                Quality = 0,
-            },
-            Layout = .UNKNOWN,
-            Flags = {.ALLOW_DEPTH_STENCIL}
-        }
-
-        clear := d3d12.CLEAR_VALUE{
-            Format = .D24_UNORM_S8_UINT,
-            DepthStencil = {
-                Depth = 1.0,
-                Stencil = 0
-            },
-        }
-
-        heap_props := d3d12.HEAP_PROPERTIES{ Type = .DEFAULT }
-        hr = renderer.device->CreateCommittedResource(
-            &heap_props, 
-            {}, 
-            &resource_desc, 
-            { .DEPTH_WRITE }, 
-            &clear, 
-            d3d12.IResource_UUID, 
-            (^rawptr)(&renderer.depth_stencils[i])
-        )
-        if hr < 0 do log.fatal("Failed to create depth stencil buffer")
-
-        renderer.device->CreateDepthStencilView(renderer.depth_stencils[i], nil, dsv_handle)
-        dsv_handle.ptr += uint(renderer.dsv_heap.descriptor_size)
-        renderer.dsv_heap.descriptor_count += 1
+    depth_clear := d3d12.CLEAR_VALUE{
+        Format = .D24_UNORM_S8_UINT,
+        DepthStencil = {
+            Depth = 1.0,
+            Stencil = 0,
+        },
     }
+
+    resource_desc := d3d12.RESOURCE_DESC{
+        Dimension = .TEXTURE2D,
+        Format = .D24_UNORM_S8_UINT,
+        Width = u64(width),
+        Height = height,
+        Alignment = 0,
+        DepthOrArraySize = 1,
+        MipLevels = 1,
+        SampleDesc = {
+            Count = 1,
+            Quality = 0,
+        },
+        Layout = .UNKNOWN,
+        Flags = {.ALLOW_DEPTH_STENCIL}
+    }
+
+    heap_props := d3d12.HEAP_PROPERTIES{ Type = .DEFAULT }
+    hr = renderer.device->CreateCommittedResource(
+        &heap_props, 
+        {}, 
+        &resource_desc, 
+        { .DEPTH_WRITE }, 
+        &depth_clear, 
+        d3d12.IResource_UUID, 
+        (^rawptr)(&renderer.depth_stencil)
+    )
+    if hr < 0 do log.fatal("Failed to create depth stencil buffer")
+
+    // MSAA render target
+    // Checking anti-aliasing support
+    ms_quality_levels := d3d12.FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS{
+        Format = .R8G8B8A8_UNORM,
+        SampleCount = N_MSAA_SAMPLES,
+    }
+    renderer.device->CheckFeatureSupport(.MULTISAMPLE_QUALITY_LEVELS, &ms_quality_levels, size_of(d3d12.FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS))
+    assert(ms_quality_levels.NumQualityLevels > 0)
+
+    msaa_desc := d3d12.RESOURCE_DESC{
+        Dimension = .TEXTURE2D,
+        Format = .R8G8B8A8_UNORM,
+        Width = u64(width),
+        Height = height,
+        DepthOrArraySize = 1,
+        MipLevels = 1,
+        SampleDesc = {
+            Count = N_MSAA_SAMPLES,
+            Quality = 0,
+        },
+        Flags = { .ALLOW_RENDER_TARGET, },
+    }
+
+    msaa_target_clear := d3d12.CLEAR_VALUE{
+        Format = .R8G8B8A8_UNORM,
+        Color = { 0, 0, 0, 0 },
+    }
+
+    msaa_heap_props := d3d12.HEAP_PROPERTIES{ Type = .DEFAULT, }
+    renderer.device->CreateCommittedResource(
+        &msaa_heap_props,
+        {},
+        &msaa_desc,
+        { .RESOLVE_SOURCE },
+        &msaa_target_clear,
+        d3d12.IResource_UUID,
+        cast(^rawptr)&renderer.msaa_target
+    )
+
+    msaa_depth_desc := d3d12.RESOURCE_DESC{
+        Dimension = .TEXTURE2D,
+        Format = .D24_UNORM_S8_UINT,
+        Width = u64(width),
+        Height = height,
+        DepthOrArraySize = 1,
+        MipLevels = 1,
+        SampleDesc = {
+            Count = N_MSAA_SAMPLES,
+            Quality = 0,
+        },
+        Flags = { .ALLOW_DEPTH_STENCIL },
+    }
+
+    renderer.device->CreateCommittedResource(
+        &msaa_heap_props,
+        {},
+        &msaa_depth_desc,
+        { .DEPTH_WRITE },
+        &depth_clear,
+        d3d12.IResource_UUID,
+        cast(^rawptr)&renderer.msaa_depth_stencil
+    )
+    
+    create_render_target_views(renderer)
 
     // Shader resource views
     n_textures: u32 = 1
@@ -701,6 +795,48 @@ create_texture :: proc(renderer: ^Renderer_Context, texture: ^asset.Texture, srv
     }
 }
 
+handle_resize :: proc(renderer: ^Renderer_Context, render_group: ^Render_Group) {
+    screen_rect: w32.RECT
+    w32.GetClientRect(renderer.window, &screen_rect)
+
+    new_width := u32(screen_rect.right - screen_rect.left)
+    new_height := u32(screen_rect.bottom - screen_rect.top)
+
+    if new_width != render_group.width || new_height != render_group.height {
+        render_group.width = new_width
+        render_group.height = new_height
+        
+        // Wait for GPU to finish
+        for &frame_context in renderer.frame_context {
+            next_fence_value := frame_context.fence_value + 1
+            renderer.command_queue->Signal(renderer.fence, next_fence_value)
+            if renderer.fence->GetCompletedValue() < next_fence_value {
+                renderer.fence->SetEventOnCompletion(next_fence_value, renderer.fence_event)
+                w32.WaitForSingleObject(renderer.fence_event, w32.INFINITE)
+            }
+        }
+
+        swap_chain_desc: dxgi.SWAP_CHAIN_DESC
+        renderer.swap_chain->GetDesc(&swap_chain_desc)
+        hr := renderer.swap_chain->ResizeBuffers(
+            N_BACK_BUFFERS,
+            new_width,
+            new_height,
+            swap_chain_desc.BufferDesc.Format,
+            swap_chain_desc.Flags,
+        )
+
+        create_render_target_views(renderer)
+
+        renderer.viewport.Width = f32(new_width)
+        renderer.viewport.Height = f32(new_height)
+        renderer.scissor_rect.right = i32(new_width)
+        renderer.scissor_rect.bottom = i32(new_height)
+
+        log.debug("Window resized to", new_width, "x", new_height)
+    }
+}
+
 render :: proc(memory: ^Game_Memory) {
     renderer := &memory.renderer
     group := &memory.render_group
@@ -732,36 +868,20 @@ render :: proc(memory: ^Game_Memory) {
     frame_context.command_alloc->Reset()
     renderer.command_list->Reset(frame_context.command_alloc, nil)
 
-    viewport := d3d12.VIEWPORT{
-        TopLeftX = 0.0,
-        TopLeftY = 0.0,
-        Width = f32(group.width),
-        Height = f32(group.height),
-        MinDepth = 0.0,
-        MaxDepth = 1.0
-    }
-    renderer.command_list->RSSetViewports(1, &viewport)
+    renderer.command_list->RSSetViewports(1, &renderer.viewport)
+    renderer.command_list->RSSetScissorRects(1, &renderer.scissor_rect)
 
-    scissor_rect :=  d3d12.RECT{
-        left = 0,
-        top = 0,
-        right = i32(group.width),
-        bottom = i32(group.height),
-    }
-    renderer.command_list->RSSetScissorRects(1, &scissor_rect)
-
-    back_buffer := renderer.render_targets[frame_index]
-    barrier := d3d12.RESOURCE_BARRIER{
+    render_target_barrier := d3d12.RESOURCE_BARRIER{
         Type = .TRANSITION,
         Flags = {},
         Transition = {
-            pResource = back_buffer,
-            StateBefore = d3d12.RESOURCE_STATE_PRESENT,
-            StateAfter = {.RENDER_TARGET},
+            pResource = renderer.msaa_target,
             Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
-        }
+            StateBefore = { .RESOLVE_SOURCE },
+            StateAfter = { .RENDER_TARGET, },
+        },
     }
-    renderer.command_list->ResourceBarrier(1, &barrier)
+    renderer.command_list->ResourceBarrier(1, &render_target_barrier)
 
     ring_buffer.offset = 0
 
@@ -790,7 +910,7 @@ render :: proc(memory: ^Game_Memory) {
     }
     renderer.command_list->SetDescriptorHeaps(2, raw_data(heaps))
 
-    rtv_handle := get_descriptor_heap_element(&renderer.rtv_heap, uint(frame_index))
+    rtv_handle := get_descriptor_heap_element(&renderer.rtv_heap, 0)
     dsv_handle := get_descriptor_heap_element(&renderer.dsv_heap, 0)
     renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
     renderer.command_list->SetGraphicsRootSignature(renderer.root_signature)
@@ -799,12 +919,12 @@ render :: proc(memory: ^Game_Memory) {
     renderer.command_list->SetGraphicsRootConstantBufferView(0, global.buffer->GetGPUVirtualAddress())
     renderer.command_list->SetGraphicsRootConstantBufferView(1, light.buffer->GetGPUVirtualAddress())
 
+    clear_color := [4]f32{ 0, 0, 0, 0}
+    renderer.command_list->ClearRenderTargetView(rtv_handle, &clear_color, 0, nil)
+    renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
+
     for entry in group.commands {
         switch entry.type {
-            case .Clear:
-                color := [4]f32{ entry.color.r, entry.color.g, entry.color.b, 1.0}
-                renderer.command_list->ClearRenderTargetView(rtv_handle, &color, 0, nil)
-                renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
             case .Mesh:
                 pipeline := renderer.shader_pipelines[entry.pipeline]
 
@@ -860,17 +980,46 @@ render :: proc(memory: ^Game_Memory) {
         }
     }
 
-    barrier = d3d12.RESOURCE_BARRIER{
+    back_buffer := renderer.render_targets[frame_index]
+    resolve_barriers := []d3d12.RESOURCE_BARRIER{
+        {
+            Type = .TRANSITION,
+            Transition = {
+                pResource = renderer.msaa_target,
+                Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                StateBefore = { .RENDER_TARGET },
+                StateAfter = { .RESOLVE_SOURCE },
+            },
+        },
+        {
+            Type = .TRANSITION,
+            Transition = {
+                pResource = back_buffer,
+                Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                StateBefore = d3d12.RESOURCE_STATE_PRESENT,
+                StateAfter = { .RESOLVE_DEST },
+            },
+        },
+    }
+    renderer.command_list->ResourceBarrier(2, raw_data(resolve_barriers))
+
+    renderer.command_list->ResolveSubresource(
+        back_buffer, 0,
+        renderer.msaa_target, 0,
+        .R8G8B8A8_UNORM
+    )
+
+    present_barrier := d3d12.RESOURCE_BARRIER{
         Type = .TRANSITION,
-        Flags = {},
         Transition = {
             pResource = back_buffer,
-            StateBefore = {.RENDER_TARGET},
-            StateAfter = d3d12.RESOURCE_STATE_PRESENT,
             Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
-        }
+            StateBefore = { .RESOLVE_DEST },
+            StateAfter = d3d12.RESOURCE_STATE_PRESENT,
+        },
     }
-    renderer.command_list->ResourceBarrier(1, &barrier)
+    renderer.command_list->ResourceBarrier(1, &present_barrier)
+
     renderer.command_list->Close()
 
     list := []^d3d12.ICommandList{

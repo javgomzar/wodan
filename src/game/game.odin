@@ -1,7 +1,6 @@
 package game
 
 import "core:log"
-import "core:math"
 import "../common"
 import "../asset"
 
@@ -41,10 +40,6 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     if memory.testing {
     
     }
-    
-    // Main game loop
-    clear_color := [3]f32{0.3, 0.3, 0.6}
-    common.push_clear(render_group, clear_color)
 
     update_camera(&render_group.camera, input)
 
@@ -60,10 +55,15 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
             render_group, 
             grid, 
             material = material,
-            pipeline = .Mesh_Pipeline,
+            pipeline = .Grid_Pipeline,
             scale = {10, 10, 10}
         )
     }
+
+    cube := asset.get_mesh_by_name(system_asset, "Mesh")
+    material := &system_asset.materials[1]
+    texture := &system_asset.textures[0]
+    common.push_mesh(render_group, cube, .Mesh_Pipeline, material, texture, scale = {1, -1, 1})
 
     common.render(memory)
 }

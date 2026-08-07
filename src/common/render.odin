@@ -71,7 +71,6 @@ Render_Light :: struct {
 Sort_Key :: distinct f32
 
 Render_Entry_Type :: enum {
-    Clear,
     Mesh,
 }
 
@@ -89,7 +88,6 @@ Render_Entry :: struct {
     pipeline:         Shader_Pipeline_ID,
     material:         ^asset.Material,
     texture:          ^asset.Texture,
-    color:            [4]f32,
 }
 
 Render_Group :: struct {
@@ -123,11 +121,6 @@ initialize_render_group :: proc(group: ^Render_Group, width: u32, height: u32) {
 add_entry :: proc(group: ^Render_Group, entry: Render_Entry) -> ^Render_Entry {
     append(&group.commands, entry)
     return &group.commands[len(group.commands) - 1]
-}
-
-push_clear :: proc(group: ^Render_Group, color: [3]f32) {
-    entry := add_entry(group, { type = .Clear })
-    entry.color.rgb = color
 }
 
 push_mesh :: proc(

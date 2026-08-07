@@ -12,7 +12,7 @@ memory: common.Game_Memory
 
 win_proc :: proc "stdcall" (window: w32.HWND, message: w32.UINT, wparam: w32.WPARAM, lparam: w32.LPARAM) -> w32.LRESULT {
     switch message {
-        case w32.WM_DESTROY:
+        case w32.WM_CLOSE, w32.WM_DESTROY:
             memory.running = false
             w32.PostQuitMessage(0)
     }
@@ -39,7 +39,15 @@ create_window :: proc(width: u32, height: u32) -> w32.HWND {
     }
 
     w32.RegisterClassW(&wcex)
-    window: w32.HWND = w32.CreateWindowW(wclassname, wclassname, w32.WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nil, nil, instance, nil)
+    window: w32.HWND = w32.CreateWindowW(
+        wclassname, 
+        wclassname, 
+        w32.WS_POPUP | w32.WS_VISIBLE, 
+        0, 0, 
+        i32(width), i32(height),
+        nil, nil, 
+        instance, nil,
+    )
 
     startup_info: w32.STARTUPINFOW
     w32.GetStartupInfoW(&startup_info)
@@ -114,6 +122,7 @@ main :: proc() {
         common.process_messages(window, input)
 
         common.update_if_newer_code(&memory)
+        common.handle_resize(&memory.renderer, &memory.render_group)
 
         memory.code.update(&memory)
 

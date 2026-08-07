@@ -264,7 +264,7 @@ initialize_manager :: proc(manager: ^Manager) {
     system_asset := add_asset(manager, "file/asset/system/system.ass", force_process = true)
     manager.system_asset_id = system_asset.id
 
-    // add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
     add_file(system_asset, "file/asset/system/grid.glb")
     add_file(system_asset, "file/asset/system/rgb_triangle.glb")
+    add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
 }
