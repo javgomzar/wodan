@@ -70,8 +70,6 @@ create_window :: proc(width: u32, height: u32) -> w32.HWND {
     Result = w32.ShowWindow(window, nCmdShow)
     Result = w32.UpdateWindow(window)
 
-    w32.QueryPerformanceFrequency(&common.performance_frequency)
-
     return window
 }
 

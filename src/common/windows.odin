@@ -7,9 +7,14 @@ import "core:os"
 import "core:log"
 import "../common"
 
+
 when ODIN_OS == .Windows {
 
 performance_frequency: w32.LARGE_INTEGER
+
+query_performance_frequency :: proc() {
+    w32.QueryPerformanceFrequency(&common.performance_frequency)
+}
 
 get_wall_clock :: proc() -> u64 {
     result: w32.LARGE_INTEGER

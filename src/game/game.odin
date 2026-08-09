@@ -7,6 +7,9 @@ import "../asset"
 
 @(export)
 initialize_game_state :: proc(memory: ^common.Game_Memory) {
+    common.set_up_timing()
+    common.start_timer()
+    defer common.end_timer()
     asset_manager := &memory.asset_manager
     asset.initialize_manager(asset_manager)
 
@@ -75,4 +78,7 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     common.push_mesh(render_group, cube, .Mesh_Pipeline, material, texture, scale = {1, -1, 1})
 
     common.render(memory)
+
+    common.print_timers()
+    clear(&common.time_records)
 }
