@@ -7,7 +7,16 @@ import "../asset"
 
 @(export)
 initialize_game_state :: proc(memory: ^common.Game_Memory) {
-    asset.initialize_manager(&memory.asset_manager)
+    asset_manager := &memory.asset_manager
+    asset.initialize_manager(asset_manager)
+
+    // System assets
+    system_asset := &asset_manager.assets[asset_manager.system_asset_id]
+    asset.add_file(system_asset, "file/asset/system/DejaVuSans.ttf")
+    asset.add_file(system_asset, "file/asset/system/DejaVuSansMono.ttf")
+    asset.add_file(system_asset, "file/asset/system/grid.glb")
+    asset.add_file(system_asset, "file/asset/system/rgb_triangle.glb")
+    asset.add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
     
     // Add assets here
 

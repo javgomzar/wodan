@@ -31,3 +31,11 @@ Mesh :: struct {
     name:       string,
     primitives: []Primitive,
 }
+
+Material :: struct {
+    name:          string,
+    base_color:    [4]f32,
+    metallic:      f32,
+    roughness:     f32,
+    color_texture: Maybe(Texture),
+}

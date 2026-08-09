@@ -121,6 +121,8 @@ main :: proc() {
         common.reset_input(input)
         common.process_messages(window, input)
 
+        if input.keyboard.key[.Alt].is_down && input.keyboard.key[.F4].is_down do break
+
         common.update_if_newer_code(&memory)
         common.handle_resize(&memory.renderer, &memory.render_group)
 

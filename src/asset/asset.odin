@@ -15,17 +15,18 @@ Import_File_Format :: enum {
     GLB,
     JPEG,
     PNG,
+    TTF,
     WAV,
 }
 
 Import_File :: struct {
     info:       os.File_Info,
     format:     Import_File_Format,
-    content:    []byte,
 }
 
 File_Header :: struct {
     magic_number:   u32,
+    font_count:     u32,
     mesh_count:     u32,
     material_count: u32,
     texture_count:  u32,
@@ -33,25 +34,29 @@ File_Header :: struct {
 
 Asset :: struct {
     id:           ID,
+    language:     Language,
     file_info:    os.File_Info,
     import_files: [dynamic]Import_File,
+    fonts:        []Font,
     meshes:       []Mesh,
     materials:    []Material,
     textures:     []Texture,
-    // fonts:        []Font,
     // text:         []Text,
     processing:   bool,
+    released:     bool,
 }
 
 Manager :: struct {
     next_asset_id:    ID,
-    system_asset_id : ID,
+    system_asset_id:  ID,
+    language:         Language,
     assets:           [dynamic]Asset,
 }
 
 add_asset :: proc(manager: ^Manager, path: string, force_process: bool = false) -> ^Asset {
     asset: Asset
     asset.id = manager.next_asset_id
+    asset.language = manager.language
     if os.exists(path) {
         error: os.Error
         asset.file_info, error = os.stat(path, context.allocator)
@@ -74,7 +79,6 @@ add_file :: proc(asset: ^Asset, path: string) {
         return
     }
     import_file.info, error = os.stat(path, context.allocator)
-    append(&asset.import_files, import_file)
     
     if !asset.processing && time.diff(asset.file_info.modification_time, import_file.info.modification_time) > 0 {
         asset.processing = true
@@ -86,12 +90,16 @@ add_file :: proc(asset: ^Asset, path: string) {
         case "jpeg": import_file.format = .JPEG
         case "png":  import_file.format = .PNG
         case "wav":  import_file.format = .WAV
+        case "ttf":  import_file.format = .TTF
         case:
             log.fatal("Invalid format '.", ext, "'", sep = "")
     }
+
+    append(&asset.import_files, import_file)
 }
 
 Load_Context :: struct {
+    fonts:     [dynamic]Font,
     meshes:    [dynamic]Mesh,
     materials: [dynamic]Material,
     textures:  [dynamic]Texture,
@@ -99,6 +107,7 @@ Load_Context :: struct {
 
 import_asset_files :: proc(asset: ^Asset) {
     load_context: Load_Context
+    defer delete(load_context.fonts)
     defer delete(load_context.meshes)
     defer delete(load_context.materials)
     defer delete(load_context.textures)
@@ -113,12 +122,18 @@ import_asset_files :: proc(asset: ^Asset) {
             case .JPEG:
                 image, error := jpeg.load_from_file(file.info.fullpath)
                 append(&load_context.textures, Texture{ image = image, })
+            case .TTF:
+                font := import_ttf(file.info.fullpath, asset.language)
+                append(&load_context.fonts, font)
             case .WAV:
                 log.fatal("Asset file loading with extension", file.format, "hasn't been implemented yet")
             case:
                 log.fatal("Invalid asset file extension '.", file.format, "'", sep = "")
         }
     }
+
+    asset.fonts = make([]Font, len(load_context.fonts))
+    copy(asset.fonts, load_context.fonts[:])
 
     asset.meshes = make([]Mesh, len(load_context.meshes))
     copy(asset.meshes, load_context.meshes[:])
@@ -132,6 +147,10 @@ import_asset_files :: proc(asset: ^Asset) {
 
 write :: proc(asset: ^Asset) {
     total_size := size_of(File_Header)
+
+    for font in asset.fonts {
+        total_size += get_serialized_size_font(font)
+    }
 
     for mesh in asset.meshes {
         total_size += get_serialized_size_mesh(mesh)
@@ -156,9 +175,14 @@ write :: proc(asset: ^Asset) {
     header := new(File_Header, allocator)
     header^ = {
         magic_number = 0xffaaaacc,
+        font_count = u32(len(asset.fonts)),
         mesh_count = u32(len(asset.meshes)),
         material_count = u32(len(asset.materials)),
         texture_count = u32(len(asset.textures)),
+    }
+
+    for font in asset.fonts {
+        serialize_font(allocator, font)
     }
 
     for mesh in asset.meshes {
@@ -193,9 +217,17 @@ load :: proc(asset: ^Asset) {
     assert(header.magic_number == 0xffaaaacc)
     block := data[size_of(File_Header):]
 
+    asset.fonts = make([]Font, header.font_count)
     asset.meshes = make([]Mesh, header.mesh_count)
     asset.materials = make([]Material, header.material_count)
     asset.textures = make([]Texture, header.texture_count)
+
+    for &font in asset.fonts {
+        size: int
+        font, size = deserialize_font(block)
+        block = block[size:]
+    }
+
     for &mesh in asset.meshes {
         size: int
         mesh, size = deserialize_mesh(block)
@@ -215,14 +247,36 @@ load :: proc(asset: ^Asset) {
     }
 
     log.info("Loaded asset file", path)
+
+    asset.released = false
 }
 
 release :: proc(asset: ^Asset) {
-    for import_file in asset.import_files {
-        os.file_info_delete(import_file.info, context.allocator)
+    if asset.released {
+        log.warn("Skipping release of already released asset.")
+        return
     }
+
+    // Import files
+    for import_file in asset.import_files do os.file_info_delete(import_file.info, context.allocator)
     if len(asset.import_files) > 0 do delete(asset.import_files)
+
+    // Fonts
+    for font in asset.fonts {
+        delete(font.name)
+        for glyph in font.glyphs {
+            for contour in glyph.contours {
+                delete(contour.points)
+            }
+            delete(glyph.contours)
+        }
+        delete(font.glyphs)
+    }
+    if len(asset.fonts) > 0 do delete(asset.fonts)
+
+    // Meshes
     for mesh in asset.meshes {
+        delete(mesh.name)
         for primitive in mesh.primitives {
             if len(primitive.positions) > 0  do delete(primitive.positions)
             if len(primitive.indices) > 0    do delete(primitive.indices)
@@ -231,12 +285,20 @@ release :: proc(asset: ^Asset) {
         delete(mesh.primitives)
     }
     if len(asset.meshes) > 0 do delete(asset.meshes)
-    if len(asset.materials) > 0 do delete(asset.materials)
-    for texture in asset.textures {
-        img.destroy(texture.image)
+
+    // Materials
+    for material in asset.materials {
+        delete(material.name)
     }
+    if len(asset.materials) > 0 do delete(asset.materials)
+
+    // Textures
+    for texture in asset.textures do img.destroy(texture.image)
     if len(asset.textures) > 0 do delete(asset.textures)
+
     os.file_info_delete(asset.file_info, context.allocator)
+
+    asset.released = true
 }
 
 release_assets :: proc(manager: ^Manager) {
@@ -258,13 +320,11 @@ get_mesh_by_name :: proc(asset: ^Asset, name: string) -> ^Mesh {
 }
 
 initialize_manager :: proc(manager: ^Manager) {
+    manager.language = .English
+    
     // empty asset for id 0
     add_asset(manager, "")
 
     system_asset := add_asset(manager, "file/asset/system/system.ass", force_process = true)
     manager.system_asset_id = system_asset.id
-
-    add_file(system_asset, "file/asset/system/grid.glb")
-    add_file(system_asset, "file/asset/system/rgb_triangle.glb")
-    add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
 }

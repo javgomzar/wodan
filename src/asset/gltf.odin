@@ -182,6 +182,7 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
     arena: vmem.Arena
     error := vmem.arena_init_growing(&arena)
     if error != nil do log.fatal("Failed to initialize memory arena for GLB asset", path)
+    defer vmem.arena_destroy(&arena)
     allocator := vmem.arena_allocator(&arena)
 
     data, os_error := os.read_entire_file(path, allocator)
@@ -336,6 +337,4 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
         }
         append(&load_context.textures, Texture{ image = image, })
     }
-
-    vmem.arena_destroy(&arena)
 }
