@@ -14,6 +14,7 @@ Game_Memory :: struct {
     render_group:  Render_Group,
     asset_manager: asset.Manager,
     code:          Game_Code,
+    time_records:  [Time_Record_ID]Time_Record,
     time:          f32,
     delta_time:    f32,
     initialized:   bool,

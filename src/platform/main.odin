@@ -96,6 +96,10 @@ main :: proc() {
     
     context.logger = common.create_logger()
 
+    when ODIN_OS == .Windows {
+        common.query_performance_frequency()
+    }
+
     // Delete old .pdb files:
     old_pdbs, error := os.glob("bin/game?*.pdb")
     if error != nil do log.fatal("Failed to search for old PDB files")
@@ -127,7 +131,6 @@ main :: proc() {
         memory.code.update(&memory)
 
         free_all(context.temp_allocator)
-        clear(&common.time_records)
         clear(&memory.render_group.commands)
 
         end_counter := common.get_wall_clock()

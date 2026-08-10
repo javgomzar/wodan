@@ -7,9 +7,10 @@ import "../asset"
 
 @(export)
 initialize_game_state :: proc(memory: ^common.Game_Memory) {
-    common.set_up_timing()
-    common.start_timer()
-    defer common.end_timer()
+    common.set_up_timing(&memory.time_records)
+    timer := common.start_timer(.Asset_Loading)
+    defer common.end_timer(timer)
+    
     asset_manager := &memory.asset_manager
     asset.initialize_manager(asset_manager)
 
@@ -80,5 +81,5 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     common.render(memory)
 
     common.print_timers()
-    clear(&common.time_records)
+    common.clear_time_records()
 }
