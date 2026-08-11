@@ -70,33 +70,31 @@ Render_Light :: struct {
 
 Sort_Key :: distinct f32
 
-Render_Entry_Type :: enum {
-    Mesh,
-}
-
 Render_Entry :: struct {
-    type:             Render_Entry_Type,
     key:              Sort_Key,
     topology:         asset.Topology,
-    position_offset:  int,
-    position_count:   int,
-    attribute_offset: int,
-    attribute_count:  int,
-    index_offset:     int,
-    index_count:      int,
-    transform:        matrix[4, 4]f32,
     pipeline:         Shader_Pipeline_ID,
+    positions:        asset.Vertex_Buffer_Entry(asset.Vertex_Position),
+    attributes:       asset.Vertex_Buffer_Entry(asset.Vertex_Attributes),
+    text_vertices:    asset.Vertex_Buffer_Entry(asset.Vertex_Text),
+    indices:          asset.Vertex_Buffer_Entry(u32),
+    transform:        matrix[4, 4]f32,
     material:         ^asset.Material,
     texture:          ^asset.Texture,
+    dynamic_buffer:   bool,
 }
 
 Render_Group :: struct {
-    width:    u32,
-    height:   u32,
-    arena:    virtual.Arena,
-    camera:   Camera,
-    light:    Render_Light,
-    commands: [dynamic]Render_Entry,
+    width:         u32,
+    height:        u32,
+    arena:         virtual.Arena,
+    camera:        Camera,
+    light:         Render_Light,
+    positions:     asset.Vertex_Buffer(asset.Vertex_Position),
+    attributes:    asset.Vertex_Buffer(asset.Vertex_Attributes),
+    text_vertices: asset.Vertex_Buffer(asset.Vertex_Text),
+    indices:       asset.Vertex_Buffer(u32),
+    commands:      [dynamic]Render_Entry,
 }
 
 initialize_render_group :: proc(group: ^Render_Group, width: u32, height: u32) {
@@ -118,9 +116,57 @@ initialize_render_group :: proc(group: ^Render_Group, width: u32, height: u32) {
     }
 }
 
-add_entry :: proc(group: ^Render_Group, entry: Render_Entry) -> ^Render_Entry {
+add_entry :: proc(
+    group: ^Render_Group,
+    topology: asset.Topology,
+    pipeline: Shader_Pipeline_ID,
+    dynamic_buffer: bool,
+    key: Sort_Key = 0,
+    transform: matrix[4, 4]f32 = 1,
+    material: ^asset.Material = nil,
+    texture: ^asset.Texture = nil,
+) -> ^Render_Entry {
+    entry := Render_Entry{
+        topology = topology,
+        key = key,
+        pipeline = pipeline,
+        transform = transform,
+        material = material,
+        texture = texture,
+        dynamic_buffer = dynamic_buffer,
+    }
+    
     append(&group.commands, entry)
     return &group.commands[len(group.commands) - 1]
+}
+
+push_rect :: proc(
+    group: ^Render_Group,
+    left: f32, top: f32,
+    width: f32, height: f32,
+    texture: ^asset.Texture = nil, 
+    color: [4]f32 = {1, 1, 1, 1}
+) {
+    entry := add_entry(group,
+        topology = .Triangle_Strip,
+        pipeline = .Text_Pipeline,
+        dynamic_buffer = true,
+        texture = texture,
+    )
+
+    entry.positions = asset.push_vertices(&group.positions, 4)
+    vertices := entry.positions.memory
+    vertices[0] = { left, top, 0 }
+    vertices[1] = { left + width, top, 0 }
+    vertices[2] = { left, top + height, 0 }
+    vertices[3] = { left + width, top + height, 0 }
+
+    entry.attributes = asset.push_vertices(&group.attributes, 4)
+    attributes := entry.attributes.memory
+    attributes[0] = { color = color, texture = {0, 1} }
+    attributes[1] = { color = color, texture = {1, 1} } 
+    attributes[2] = { color = color, texture = {0, 0} } 
+    attributes[3] = { color = color, texture = {1, 0} }
 }
 
 push_mesh :: proc(
@@ -135,19 +181,21 @@ push_mesh :: proc(
     outline:     bool = false,
 ) {
     for primitive in mesh.primitives {
-        add_entry(group, {
-            type = .Mesh,
+        entry := add_entry(group,
+            topology = primitive.topology,
+            pipeline = pipeline,
+            dynamic_buffer = false,
             transform = linalg.matrix4_from_trs_f32(translation, rotation, scale),
             material = material,
             texture = texture,
-            topology = primitive.topology,
-            pipeline = pipeline,
-            index_count = len(primitive.indices),
-            index_offset = primitive.index_offset,
-            position_count = len(primitive.positions),
-            position_offset = primitive.position_offset,
-            attribute_count = len(primitive.attributes),
-            attribute_offset = primitive.attribute_offset,
-        })
+        )
+
+        entry.positions = asset.static_vertices(len(primitive.positions), primitive.position_offset, asset.Vertex_Position)
+        if len(primitive.indices) > 0 {
+            entry.indices = asset.static_vertices(len(primitive.indices), primitive.index_offset, u32)
+        }
+        if len(primitive.attributes) > 0 {
+            entry.attributes = asset.static_vertices(len(primitive.attributes), primitive.attribute_offset, asset.Vertex_Attributes)
+        }
     }
 }

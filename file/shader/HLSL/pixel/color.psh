@@ -9,5 +9,10 @@ struct VS_OUT {
 };
 
 float4 main(VS_OUT vout): SV_TARGET {
-    return material_color;
+    float4 texture_color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    if (color_texture_index > 0) {
+        Texture2D color_texture = ResourceDescriptorHeap[color_texture_index];
+        texture_color = color_texture.Sample(linear_wrap, vout.texture);
+    }
+    return vout.color * texture_color;
 }

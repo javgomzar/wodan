@@ -32,7 +32,7 @@ shader_target := [Shader_Type]w32.wstring {
 }
 
 Shader_ID :: enum {
-    None,
+    None = 0,
     Vertex_Screen,
     Vertex_Passthrough,
     Vertex_Mesh,
@@ -55,6 +55,7 @@ get_shader_path :: proc(id: Shader_ID) -> string {
 Shader_Pipeline_ID :: enum {
     Grid_Pipeline,
     Mesh_Pipeline,
+    Text_Pipeline,
 }
 
 Shader_Pipeline_Entry :: struct {
@@ -65,26 +66,23 @@ Shader_Pipeline_Entry :: struct {
 shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
     .Grid_Pipeline = {
         primitive = .LINE,
-        stage = {
-            .Vertex =   .Vertex_Mesh,
-            .Domain =   .None,
-            .Hull =     .None,
-            .Geometry = .None,
-            .Pixel =    .Pixel_Color,
-            .Compute =  .None,
-            .Library =  .None,
+        stage = #partial {
+            .Vertex = .Vertex_Mesh,
+            .Pixel = .Pixel_Color,
         },
     },
     .Mesh_Pipeline = {
         primitive = .TRIANGLE,
-        stage = {
-            .Vertex =   .Vertex_Mesh,
-            .Domain =   .None,
-            .Hull =     .None,
-            .Geometry = .None,
-            .Pixel =    .Pixel_Mesh,
-            .Compute =  .None,
-            .Library =  .None,
+        stage = #partial {
+            .Vertex = .Vertex_Mesh,
+            .Pixel = .Pixel_Mesh,
+        },
+    },
+    .Text_Pipeline = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Screen,
+            .Pixel = .Pixel_Color, 
         },
     },
 }
@@ -135,12 +133,14 @@ set_constant_buffer :: proc(renderer: ^Renderer_Context, value: ^$T) {
 }
 
 Per_Draw_Data :: struct #align(256) {
-    transform:           matrix[4, 4]f32,
-    normal:              matrix[4, 4]f32,
-    material_color:      [4]f32,
-    metallic:            f32,
-    roughness:           f32,
-    color_texture_index: u32,
+    transform:            matrix[4, 4]f32,
+    normal:               matrix[4, 4]f32,
+    material_color:       [4]f32,
+    metallic:             f32,
+    roughness:            f32,
+    color_texture_index:  u32,
+    normal_texture_index: u32,
+    text_texture_index:   u32,
 }
 
 DXC_Shader :: struct {

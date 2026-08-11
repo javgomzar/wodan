@@ -33,13 +33,13 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
         else do asset.load(&game_asset)
     }
 
-    common.initialize_renderer(&memory.asset_manager, &memory.renderer, memory.render_group.width, memory.render_group.height)
+    common.initialize_renderer(&memory.asset_manager, &memory.renderer, &memory.render_group)
     memory.initialized = true
 }
 
 @(export)
 reload_game_state :: proc(memory: ^common.Game_Memory) {
-
+    common.set_up_timing(&memory.time_records)
 }
 
 @(export)

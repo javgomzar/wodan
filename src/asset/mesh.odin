@@ -1,14 +1,6 @@
 package asset
 
 
-Vertex_Position :: distinct [3]f32
-
-Vertex_Attributes :: struct #align(16) {
-    normal:  [3]f32,
-    texture: [2]f32,
-    color:   [4]f32,
-}
-
 Topology :: enum u32 {
     Point,
     Line,
