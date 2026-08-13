@@ -1,0 +1,19 @@
+#include "common.hlsli"
+
+struct VS_OUT {
+    float4 sv_position: SV_POSITION;
+    float3 position: POSITION;
+    float3 normal: NORMAL;
+    float2 texture: TEXCOORD;
+    float4 color: COLOR;
+};
+
+struct bezier_curve {
+    float2 p0;
+    float2 p1;
+    float2 p2;
+}
+
+float4 main(VS_OUT vout): SV_TARGET {
+    
+}

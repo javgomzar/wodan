@@ -26,21 +26,23 @@ Glyph_Composite_Record :: struct {
 Glyph :: struct {
     id:            i32,
     code:          i32,
-    left, top:     i16,
-    width, height: u16,
+    left, top:     f32,
+    width, height: f32,
     composite:     bool,
     contours:      []Glyph_Contour,
     children:      []Glyph_Composite_Record,
 }
 
 Font :: struct {
-    name:          string,
-    space_advance: u16,
-    line_jump:     u16,
-    min_x, max_x:  i16,
-    min_y, max_y:  i16,
-    units_per_em:  f32,
-    glyphs:        []Glyph,
+    name:              string,
+    space_advance:     f32,
+    line_jump:         f32,
+    min_x, max_x:      f32,
+    min_y, max_y:      f32,
+    units_per_em:      f32,
+    glyphs:            []Glyph,
+    code_to_index:     map[i32]i32,
+    glyph_id_to_index: map[i32]i32,
 }
 
 FWORD :: distinct i16be
@@ -299,7 +301,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
 
     head_table: TTF_Head_Table
     hhead_table: TTF_HHead_Table
-    vhead_table: TTF_VHead_Table
+    n_hmetrics: i32
     n_glyphs: u16
     location_table: [^]u32be
     glyph_table: []byte
@@ -318,8 +320,8 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
             case { 'h', 'e', 'a', 'd' }:
                 head_table = extract_from_memory(data[table.offset:], TTF_Head_Table)
                 assert(head_table.version == 0x00010000 && head_table.magic_number == 0x5F0F3CF5)
-                result.min_x, result.max_x = i16(head_table.min_x), i16(head_table.max_x)
-                result.min_y, result.max_y = i16(head_table.min_y), i16(head_table.max_y)
+                result.min_x, result.max_x = f32(head_table.min_x), f32(head_table.max_x)
+                result.min_y, result.max_y = f32(head_table.min_y), f32(head_table.max_y)
                 result.units_per_em = f32(head_table.units_per_em)
             case { 'm', 'a', 'x', 'p' }:
                 maxp_table := extract_from_memory(data[table.offset:], TTF_MaxP_Table)
@@ -330,8 +332,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                 glyph_table = data[table.offset:]
             case { 'h', 'h', 'e', 'a' }:
                 hhead_table = extract_from_memory(data[table.offset:], TTF_HHead_Table)
-            case { 'v', 'h', 'e', 'a' }:
-                vhead_table = extract_from_memory(data[table.offset:], TTF_VHead_Table)
+                n_hmetrics = i32(hhead_table.number_of_hmetrics)
             case { 'h', 'm', 't', 'x' }:
                 horizontal_metrics_table = cast([^]TTF_Long_Hor_Metric)raw_data(data[table.offset:])
             case { 'v', 'm', 't', 'x' }:
@@ -340,8 +341,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                 os2_table := extract_from_memory(data[table.offset:], TTF_OS2_Table)
                 fs_selection := transmute(TTF_FS_Selection_Flags)u16(os2_table.fs_selection)
                 if .Use_Typo_Metrics in fs_selection {
-                    line_jump := u16(os2_table.s_typo_ascender - os2_table.s_typo_descender + os2_table.s_typo_line_gap)
-                    result.line_jump = line_jump
+                    result.line_jump = f32(os2_table.s_typo_ascender - os2_table.s_typo_descender + os2_table.s_typo_line_gap)
                 }
             case { 'c', 'm', 'a', 'p' }:
                 cmap_start := data[table.offset:]
@@ -379,14 +379,10 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
     }
 
     if result.line_jump == 0 {
-        result.line_jump = u16(hhead_table.ascender - hhead_table.descender + hhead_table.line_gap)
+        result.line_jump = f32(hhead_table.ascender - hhead_table.descender + hhead_table.line_gap)
     }
     
     other_left_side_bearings := cast([^]FWORD)horizontal_metrics_table[hhead_table.number_of_hmetrics:]
-    other_top_side_bearings: [^]FWORD
-    if vhead_table.num_of_long_ver_metrics != 0 {
-        other_top_side_bearings = cast([^]FWORD)vertical_metrics_table[vhead_table.num_of_long_ver_metrics:]
-    }
 
     // Collect glyph data location in memory
     glyph_offsets := make([]u32, n_glyphs + 1, allocator)
@@ -406,13 +402,15 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
 
     // Space glyph
     space_glyph_id := get_glyph_id(0x20, start_codes, end_codes, id_range_offsets, id_deltas)
-    result.space_advance = u16(horizontal_metrics_table[space_glyph_id].advance_width)
+    result.space_advance = f32(horizontal_metrics_table[space_glyph_id].advance_width)
 
     // Parse glyphs
     glyph_ids := make([dynamic]i32, allocator)
     codes := make([dynamic]i32, allocator)
     append(&glyph_ids, 0)
     append(&codes, 0)
+    result.code_to_index[0] = 0
+    result.glyph_id_to_index[0] = 0
     
     language_ranges := unicode_range_flags[language]
     for range, name in unicode_ranges {
@@ -426,6 +424,8 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                     continue
                 }
                 if glyph_id != 0 {
+                    result.code_to_index[code] = i32(len(codes))
+                    result.glyph_id_to_index[glyph_id] = i32(len(glyph_ids))
                     append(&glyph_ids, glyph_id)
                     append(&codes, code)
                 }
@@ -444,6 +444,18 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
         glyph_data := glyph_table[offset:]
         glyph_header := extract_from_memory(glyph_data, TTF_Glyph_Header)
         glyph_data = glyph_data[size_of(TTF_Glyph_Header):]
+
+        // metrics
+        if glyph_id < n_hmetrics {
+            glyph.width = f32(horizontal_metrics_table[glyph_id].advance_width)
+            glyph.left = f32(horizontal_metrics_table[glyph_id].left_side_bearing)
+        }
+        else {
+            glyph.width = f32(horizontal_metrics_table[n_hmetrics-1].advance_width)
+            glyph.left = f32(other_left_side_bearings[glyph_id - n_hmetrics])
+        }
+        glyph.height = f32(glyph_header.max_y - glyph_header.min_y)
+        glyph.top = f32(glyph_header.max_y)
 
         if glyph_header.n_contours == 0 {
             log.warn("Glyph", glyph_id, "has zero contours for font", result.name)
@@ -659,4 +671,8 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
     }
 
     return
+}
+
+build_spatial_acceleration :: proc(font: ^Font) {
+    
 }

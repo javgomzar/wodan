@@ -271,6 +271,8 @@ release :: proc(asset: ^Asset) {
             delete(glyph.contours)
         }
         delete(font.glyphs)
+        delete(font.code_to_index)
+        delete(font.glyph_id_to_index)
     }
     if len(asset.fonts) > 0 do delete(asset.fonts)
 
@@ -317,6 +319,17 @@ get_mesh_by_name :: proc(asset: ^Asset, name: string) -> ^Mesh {
         }
     }
     return result
+}
+
+get_font_by_name :: proc(manager: ^Manager, name: string) -> ^Font {
+    for asset in manager.assets[1:] {
+        for &font in asset.fonts {
+            if font.name == name {
+                return &font
+            }
+        }
+    }
+    return nil
 }
 
 initialize_manager :: proc(manager: ^Manager) {

@@ -79,12 +79,14 @@ Render_Entry :: struct {
     text_vertices:    asset.Vertex_Buffer_Entry(asset.Vertex_Text),
     indices:          asset.Vertex_Buffer_Entry(u32),
     transform:        matrix[4, 4]f32,
+    font:             ^asset.Font,
     material:         ^asset.Material,
     texture:          ^asset.Texture,
     dynamic_buffer:   bool,
 }
 
 Render_Group :: struct {
+    asset_manager: ^asset.Manager,
     width:         u32,
     height:        u32,
     arena:         virtual.Arena,
@@ -97,7 +99,8 @@ Render_Group :: struct {
     commands:      [dynamic]Render_Entry,
 }
 
-initialize_render_group :: proc(group: ^Render_Group, width: u32, height: u32) {
+initialize_render_group :: proc(group: ^Render_Group, asset_manager: ^asset.Manager, width: u32, height: u32) {
+    group.asset_manager = asset_manager
     group.width, group.height = width, height
     error := virtual.arena_init_static(&group.arena, 64 * mem.Kilobyte)
     if error != nil do log.fatal("Failed to reserve memory for render group arena")
@@ -169,6 +172,30 @@ push_rect :: proc(
     attributes[3] = { color = color, texture = {1, 0} }
 }
 
+push_triangle :: proc(
+    group: ^Render_Group,
+    triangle: Triangle2,
+    color: [4]f32 = {1, 1, 1, 1},
+) {
+    entry := add_entry(group,
+        topology = .Triangle,
+        pipeline = .Text_Pipeline,
+        dynamic_buffer = true,
+    )
+
+    entry.positions = asset.push_vertices(&group.positions, 3)
+    vertices := entry.positions.memory
+    vertices[0] = { triangle[0].x, triangle[0].y, 0 }
+    vertices[1] = { triangle[1].x, triangle[1].y, 0 }
+    vertices[2] = { triangle[2].x, triangle[2].y, 0 }
+
+    entry.attributes = asset.push_vertices(&group.attributes, 3)
+    attributes := entry.attributes.memory
+    attributes[0] = { color = color }
+    attributes[1] = { color = color }
+    attributes[2] = { color = color }
+}
+
 push_mesh :: proc(
     group:       ^Render_Group,
     mesh:        ^asset.Mesh,
@@ -197,5 +224,43 @@ push_mesh :: proc(
         if len(primitive.attributes) > 0 {
             entry.attributes = asset.static_vertices(len(primitive.attributes), primitive.attribute_offset, asset.Vertex_Attributes)
         }
+    }
+}
+
+push_text :: proc(
+    group: ^Render_Group,
+    text: string,
+    left: f32, bottom: f32,
+    points: f32,
+    font_name: string = "DejaVuSansMono",
+    color: [4]f32 = {1, 1, 1, 1},
+) {
+    font := asset.get_font_by_name(group.asset_manager, font_name)
+    pen := [2]f32{left, bottom}
+
+    DPI :: 96
+    size := points * (DPI / 72.0) / font.units_per_em
+    for i in 0..<len(text) {
+        char := text[i]
+
+        if char == '\n' {
+            pen.x = left
+            pen.y += size * font.line_jump
+            continue
+        }
+
+        if char == ' ' {
+            pen.x += size * font.space_advance
+            continue
+        }
+
+        index, ok := font.code_to_index[i32(char)]
+        if !ok do index = 0
+        glyph := font.glyphs[index]
+        push_rect(group,
+            pen.x - 0.5 * size * glyph.left, pen.y - size * glyph.top, size * glyph.width, size * glyph.height, color = color
+        )
+
+        pen.x += size * glyph.width
     }
 }

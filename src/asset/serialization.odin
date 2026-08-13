@@ -225,7 +225,7 @@ deserialize_glyph_contour :: proc(memory: []byte) -> (result: Glyph_Contour, siz
 }
 
 get_serialized_size_glyph :: proc(glyph: Glyph) -> (size: int) {
-    size += 2 * size_of(i32) + 2 * size_of(i16) + 2 * size_of(u16) + size_of(bool)
+    size += 6 * size_of(f32) + size_of(bool)
     if glyph.composite {
         size += get_serialized_size_slice(glyph.children)
     }
@@ -240,26 +240,26 @@ get_serialized_size_glyph :: proc(glyph: Glyph) -> (size: int) {
 
 serialize_glyph :: proc(memory: []byte, glyph: Glyph) -> (size: int) {
     dump_to_memory(memory, glyph.id)
-    block := memory[size_of(i32):]
-    size += size_of(i32)
+    block := memory[size_of(glyph.id):]
+    size += size_of(glyph.id)
     dump_to_memory(block, glyph.code)
-    block = block[size_of(i32):]
-    size += size_of(i32)
+    block = block[size_of(glyph.code):]
+    size += size_of(glyph.code)
     dump_to_memory(block, glyph.left)
-    block = block[size_of(i16):]
-    size += size_of(i16)
+    block = block[size_of(glyph.left):]
+    size += size_of(glyph.left)
     dump_to_memory(block, glyph.top)
-    block = block[size_of(i16):]
-    size += size_of(i16)
+    block = block[size_of(glyph.top):]
+    size += size_of(glyph.top)
     dump_to_memory(block, glyph.width)
-    block = block[size_of(u16):]
-    size += size_of(u16)
+    block = block[size_of(glyph.width):]
+    size += size_of(glyph.width)
     dump_to_memory(block, glyph.height)
-    block = block[size_of(u16):]
-    size += size_of(u16)
+    block = block[size_of(glyph.height):]
+    size += size_of(glyph.height)
     dump_to_memory(block, glyph.composite)
-    block = block[size_of(bool):]
-    size += size_of(bool)
+    block = block[size_of(glyph.composite):]
+    size += size_of(glyph.composite)
     if glyph.composite {
         slice_size := serialize_slice(block, glyph.children)
         block = block[slice_size:]
@@ -287,18 +287,18 @@ deserialize_glyph :: proc(memory: []byte) -> (result: Glyph, size: int) {
     result.code = extract_from_memory(block, i32)
     block = block[size_of(i32):]
     size += size_of(i32)
-    result.left = extract_from_memory(block, i16)
-    block = block[size_of(i16):]
-    size += size_of(i16)
-    result.top = extract_from_memory(block, i16)
-    block = block[size_of(i16):]
-    size += size_of(i16)
-    result.width = extract_from_memory(block, u16)
-    block = block[size_of(u16):]
-    size += size_of(u16)
-    result.height = extract_from_memory(block, u16)
-    block = block[size_of(u16):]
-    size += size_of(u16)
+    result.left = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.top = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.width = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.height = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
     result.composite = extract_from_memory(block, bool)
     block = block[size_of(bool):]
     size += size_of(bool)
@@ -326,8 +326,8 @@ deserialize_glyph :: proc(memory: []byte) -> (result: Glyph, size: int) {
 
 get_serialized_size_font :: proc(font: Font) -> (size: int) {
     size += get_serialized_size_string(font.name)
-    size += 2 * size_of(u16) // space advance and line jump
-    size += 4 * size_of(i16) // min/max x, y
+    size += 2 * size_of(f32) // space advance and line jump
+    size += 4 * size_of(f32) // min/max x, y
     size += size_of(f32)     // units per EM
     size += size_of(u32)     // glyph count
     for glyph in font.glyphs {
@@ -347,17 +347,17 @@ serialize_font :: proc(allocator: mem.Allocator, font: Font) {
     name_size := serialize_string(block, font.name)
     block = block[name_size:]
     dump_to_memory(block, font.space_advance)
-    block = block[size_of(u16):]
+    block = block[size_of(f32):]
     dump_to_memory(block, font.line_jump)
-    block = block[size_of(u16):]
+    block = block[size_of(f32):]
     dump_to_memory(block, font.min_x)
-    block = block[size_of(i16):]
+    block = block[size_of(f32):]
     dump_to_memory(block, font.max_x)
-    block = block[size_of(i16):]
+    block = block[size_of(f32):]
     dump_to_memory(block, font.min_y)
-    block = block[size_of(i16):]
+    block = block[size_of(f32):]
     dump_to_memory(block, font.max_y)
-    block = block[size_of(i16):]
+    block = block[size_of(f32):]
     dump_to_memory(block, font.units_per_em)
     block = block[size_of(f32):]
 
@@ -375,24 +375,24 @@ deserialize_font :: proc(memory: []byte) -> (result: Font, size: int) {
     block := memory[name_size:]
     size += name_size
 
-    result.space_advance = extract_from_memory(block, u16)
-    block = block[size_of(u16):]
-    size += size_of(u16)
-    result.line_jump = extract_from_memory(block, u16)
-    block = block[size_of(u16):]
-    size += size_of(u16)
-    result.min_x = extract_from_memory(block, i16)
-    block = block[size_of(i16):]
-    size += size_of(i16)
-    result.max_x = extract_from_memory(block, i16)
-    block = block[size_of(i16):]
-    size += size_of(i16)
-    result.min_y = extract_from_memory(block, i16)
-    block = block[size_of(i16):]
-    size += size_of(i16)
-    result.max_y = extract_from_memory(block, i16)
-    block = block[size_of(i16):]
-    size += size_of(i16)
+    result.space_advance = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.line_jump = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.min_x = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.max_x = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.min_y = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.max_y = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
     result.units_per_em = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)

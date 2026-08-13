@@ -108,7 +108,7 @@ main :: proc() {
         if error != nil do log.fatal("Failed to remove old PDB files")
     }
 
-    common.initialize_render_group(&memory.render_group, 1280, 720)
+    common.initialize_render_group(&memory.render_group, &memory.asset_manager, 1280, 720)
     window := create_window(memory.render_group.width, memory.render_group.height)
 
     common.load_code(code)
