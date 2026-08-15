@@ -102,7 +102,7 @@ Render_Group :: struct {
 initialize_render_group :: proc(group: ^Render_Group, asset_manager: ^asset.Manager, width: u32, height: u32) {
     group.asset_manager = asset_manager
     group.width, group.height = width, height
-    error := virtual.arena_init_static(&group.arena, 64 * mem.Kilobyte)
+    error := virtual.arena_init_growing(&group.arena, 64 * mem.Kilobyte)
     if error != nil do log.fatal("Failed to reserve memory for render group arena")
 
     group.commands = make([dynamic]Render_Entry, virtual.arena_allocator(&group.arena))
