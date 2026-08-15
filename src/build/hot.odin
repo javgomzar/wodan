@@ -16,7 +16,9 @@ main :: proc() {
 
     pdb_name := fmt.tprintf("-pdb-name:%s", path)
     process, error := os.process_start({
-        command = {"odin", "build", "src/game", "-out:bin/game.dll", "-debug", "-build-mode:dll", pdb_name}
+        command = {"odin", "build", "src/game", "-out:bin/game.dll", "-debug", "-build-mode:dll", pdb_name},
+        stdout = os.stdout,
+        stderr = os.stderr,
     })
 
     end_state, _ := os.process_wait(process)
