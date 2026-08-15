@@ -33,29 +33,38 @@ shader_target := [Shader_Type]w32.wstring {
 
 Shader_ID :: enum {
     None = 0,
-    Vertex_Screen,
     Vertex_Passthrough,
+    Vertex_Screen,
+    Vertex_Screen_Attributes,
+    Vertex_World,
     Vertex_Mesh,
     Pixel_Color,
     Pixel_Mesh,
+    Pixel_Texture,
 }
 
 get_shader_path :: proc(id: Shader_ID) -> string {
     switch id {
-        case .None:               return ""
-        case .Vertex_Screen:      return "file/shader/HLSL/vertex/screen.vsh"
-        case .Vertex_Passthrough: return "file/shader/HLSL/vertex/passthrough.vsh"
-        case .Vertex_Mesh:        return "file/shader/HLSL/vertex/mesh.vsh"
-        case .Pixel_Color:        return "file/shader/HLSL/pixel/color.psh"
-        case .Pixel_Mesh:         return "file/shader/HLSL/pixel/mesh.psh"
+        case .None:                     return ""
+        case .Vertex_Screen:            return "file/shader/HLSL/vertex/screen.vsh"
+        case .Vertex_Screen_Attributes: return "file/shader/HLSL/vertex/screen_attributes.vsh"
+        case .Vertex_World:             return "file/shader/HLSL/vertex/world.vsh"
+        case .Vertex_Passthrough:       return "file/shader/HLSL/vertex/passthrough.vsh"
+        case .Vertex_Mesh:              return "file/shader/HLSL/vertex/mesh.vsh"
+        case .Pixel_Color:              return "file/shader/HLSL/pixel/color.psh"
+        case .Pixel_Mesh:               return "file/shader/HLSL/pixel/mesh.psh"
+        case .Pixel_Texture:            return "file/shader/HLSL/pixel/texture.psh"
     }
     return ""
 }
 
 Shader_Pipeline_ID :: enum {
-    Grid_Pipeline,
-    Mesh_Pipeline,
-    Text_Pipeline,
+    Screen_Line,
+    Screen_Triangle,
+    Screen_Texture,
+    Grid,
+    Mesh,
+    Text,
 }
 
 Shader_Pipeline_Entry :: struct {
@@ -64,21 +73,42 @@ Shader_Pipeline_Entry :: struct {
 }
 
 shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
-    .Grid_Pipeline = {
+    .Screen_Line = {
         primitive = .LINE,
         stage = #partial {
-            .Vertex = .Vertex_Mesh,
+            .Vertex = .Vertex_Screen,
             .Pixel = .Pixel_Color,
         },
     },
-    .Mesh_Pipeline = {
+    .Screen_Triangle = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Screen,
+            .Pixel = .Pixel_Color,
+        }
+    },
+    .Screen_Texture = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Screen_Attributes,
+            .Pixel = .Pixel_Texture,
+        }
+    },
+    .Grid = {
+        primitive = .LINE,
+        stage = #partial {
+            .Vertex = .Vertex_World,
+            .Pixel = .Pixel_Color,
+        },
+    },
+    .Mesh = {
         primitive = .TRIANGLE,
         stage = #partial {
             .Vertex = .Vertex_Mesh,
             .Pixel = .Pixel_Mesh,
         },
     },
-    .Text_Pipeline = {
+    .Text = {
         primitive = .TRIANGLE,
         stage = #partial {
             .Vertex = .Vertex_Screen,
@@ -506,13 +536,13 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
 
     pipeline_desc.RTVFormats[0] = .R8G8B8A8_UNORM
     pipeline_desc.BlendState.RenderTarget[0] = {
-        BlendEnable = w32.FALSE,
+        BlendEnable = w32.TRUE,
         LogicOpEnable = w32.FALSE,
-        SrcBlend = .ONE,
-        DestBlend = .ZERO,
+        SrcBlend = .SRC_ALPHA,
+        DestBlend = .INV_SRC_ALPHA,
         BlendOp = .ADD,
         SrcBlendAlpha = .ONE,
-        DestBlendAlpha = .ZERO,
+        DestBlendAlpha = .INV_SRC_ALPHA,
         BlendOpAlpha = .ADD,
         LogicOp = .NOOP,
         RenderTargetWriteMask = 0xf,

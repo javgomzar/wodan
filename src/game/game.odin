@@ -58,8 +58,9 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
                 render_group, 
                 grid, 
                 material = material,
-                pipeline = .Grid_Pipeline,
-                scale = {10, 10, 10}
+                pipeline = .Grid,
+                scale = {10, 10, 10},
+                color = {1, 1, 1, 0.4},
             )
         }
 
@@ -97,7 +98,7 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     cube := asset.get_mesh_by_name(system_asset, "Mesh")
     material := &system_asset.materials[1]
     texture := &system_asset.textures[0]
-    common.push_mesh(render_group, cube, .Mesh_Pipeline, material, texture, scale = {1, -1, 1})
+    common.push_mesh(render_group, cube, .Mesh, material = material, texture = texture, scale = {1, -1, 1})
 
     common.push_text(render_group, "This is a test string !", 300, 300, 42)
 

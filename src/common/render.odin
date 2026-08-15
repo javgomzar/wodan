@@ -79,6 +79,7 @@ Render_Entry :: struct {
     text_vertices:    asset.Vertex_Buffer_Entry(asset.Vertex_Text),
     indices:          asset.Vertex_Buffer_Entry(u32),
     transform:        matrix[4, 4]f32,
+    color:            [4]f32,
     font:             ^asset.Font,
     material:         ^asset.Material,
     texture:          ^asset.Texture,
@@ -128,6 +129,7 @@ add_entry :: proc(
     transform: matrix[4, 4]f32 = 1,
     material: ^asset.Material = nil,
     texture: ^asset.Texture = nil,
+    color: [4]f32 = {1, 1, 1, 1},
 ) -> ^Render_Entry {
     entry := Render_Entry{
         topology = topology,
@@ -137,6 +139,7 @@ add_entry :: proc(
         material = material,
         texture = texture,
         dynamic_buffer = dynamic_buffer,
+        color = color,
     }
     
     append(&group.commands, entry)
@@ -181,6 +184,7 @@ push_triangle :: proc(
         topology = .Triangle,
         pipeline = .Text_Pipeline,
         dynamic_buffer = true,
+        color = color,
     )
 
     entry.positions = asset.push_vertices(&group.positions, 3)
@@ -200,6 +204,7 @@ push_mesh :: proc(
     group:       ^Render_Group,
     mesh:        ^asset.Mesh,
     pipeline:    Shader_Pipeline_ID,
+    color:       [4]f32 = {1, 1, 1, 1},
     material:    ^asset.Material = nil,
     texture:     ^asset.Texture = nil,
     translation: linalg.Vector3f32 = 0,
@@ -213,6 +218,7 @@ push_mesh :: proc(
             pipeline = pipeline,
             dynamic_buffer = false,
             transform = linalg.matrix4_from_trs_f32(translation, rotation, scale),
+            color = color,
             material = material,
             texture = texture,
         )

@@ -961,13 +961,13 @@ render :: proc(memory: ^Game_Memory) {
         per_draw_data := Per_Draw_Data{
             transform = linalg.transpose(entry.transform),
             normal = linalg.matrix4_from_matrix3(linalg.inverse(linalg.matrix3_from_matrix4(entry.transform))),
-            material_color = {1, 1, 1, 1},
+            material_color = entry.color,
         }
         if entry.texture != nil {
             per_draw_data.color_texture_index = u32(entry.texture.gpu_index)
         }
         if entry.material != nil {
-            per_draw_data.material_color = entry.material.base_color
+            per_draw_data.material_color = entry.material.base_color * entry.color
             per_draw_data.metallic = entry.material.metallic
             per_draw_data.roughness = entry.material.roughness
         }
