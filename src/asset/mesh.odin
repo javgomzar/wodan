@@ -14,9 +14,9 @@ Primitive :: struct {
     indices:          []u32,
     positions:        []Vertex_Position,
     attributes:       []Vertex_Attributes,
-    index_offset:     int,
     position_offset:  int,
     attribute_offset: int,
+    index_offset:     int,
 }
 
 Mesh :: struct {
