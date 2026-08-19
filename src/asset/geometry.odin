@@ -1,14 +1,15 @@
-package common
+package asset
 
 import "core:log"
+import "core:slice"
 import "core:math"
 import "core:math/linalg"
 
 
+epsilon :: 0.000001
+
 Point2 :: distinct [2]f32
 Vector2 :: distinct [2]f32
-
-epsilon :: 0.000001
 
 perpendicular :: proc(v: Vector2) -> Vector2 {
     return { -v.y, v.x }
@@ -37,6 +38,16 @@ intersect_line_with_point :: proc(line: Line2, point: Point2) -> bool {
 
 separate_points :: proc(line: Line2, a: Point2, b: Point2) -> bool {
     return (line[0] + line[1] * a.x + line[2] * a.y) * (line[0] + line[1] * b.x + line[2] * b.y) < 0
+}
+
+// If result is > 0, p is strictly left of the line start -> end. If result is < 0, it's strictly right. If 0, point is in the line.
+is_left :: proc(start: Point2, end: Point2, p: Point2) -> f32 {
+    return (end.x - start.x) * (p.y - start.y) - (p.x - start.x) * (end.y - start.y)
+}
+
+Segment2 :: struct {
+    start: Point2,
+    end: Point2,
 }
 
 Rect :: struct {
@@ -77,7 +88,57 @@ intersect_rect_with_line :: proc(rect: Rect, line: Line2) -> bool {
     return false
 }
 
+intersect_rect_with_segment :: proc(rect: Rect, segment: Segment2) -> bool {
+    min_x := rect.left
+    max_x := rect.left + rect.width
+    min_y := rect.top
+    max_y := rect.top + rect.height
+
+    segment_view := segment
+    delta := segment.end - segment.start
+
+    min_tx, max_tx: f32
+    if abs(delta.x) < epsilon {
+        if min_x <= segment.start.x && segment.start.x <= max_x {
+            min_tx = 0
+            max_tx = 1
+        }
+        else do return false
+    }
+    else {
+        tx_1 := (min_x - segment.start.x) / delta.x
+        tx_2 := (max_x - segment.start.x) / delta.x
+    
+        min_tx = min(tx_1, tx_2)
+        max_tx = max(tx_1, tx_2)
+    }
+    
+    min_ty, max_ty: f32
+    if abs(delta.y) < epsilon {
+        if min_y <= segment.start.y && segment.start.y <= max_y {
+            min_ty = 0
+            max_ty = 1
+        }
+        else do return false
+    }
+    else {
+        ty_1 := (min_y - segment.start.y) / delta.y
+        ty_2 := (max_y - segment.start.y) / delta.y
+    
+        min_ty = min(ty_1, ty_2)
+        max_ty = max(ty_1, ty_2)
+    }
+
+    return max(0, min_tx, min_ty) <= min(1, max_tx, max_ty)
+}
+
 Triangle2 :: distinct [3]Point2
+
+get_area :: proc(triangle: Triangle2) -> f32 {
+    u := get_vector(triangle[0], triangle[1])
+    v := get_vector(triangle[1], triangle[2])
+    return 0.5 * (u.x * v.y - u.y * v.x)
+}
 
 // The lines are ordered so that the point with the same index is the opposite vertex.
 get_lines_triangle :: proc(triangle: Triangle2) -> [3]Line2 {
@@ -121,8 +182,8 @@ intersect_rect_with_triangle :: proc(rect: Rect, triangle: Triangle2) -> bool {
             direction.x * rect_points[3].x + direction.y * rect_points[3].y,
         }
         
-        rect_max := max(rect_projections[0], rect_projections[1], rect_projections[2], rect_projections[3])
-        rect_min := min(rect_projections[0], rect_projections[1], rect_projections[2], rect_projections[3])
+        rect_max := slice.max(rect_projections[:])
+        rect_min := slice.min(rect_projections[:])
 
         triangle_projections := [3]f32{
             direction.x * triangle[0].x + direction.y * triangle[0].y,
