@@ -432,3 +432,33 @@ send_render_text_commands :: proc(group: ^Render_Group) {
         }
     }
 }
+
+push_sky :: proc(group: ^Render_Group) {
+    entry := add_entry(group, .Triangle, .Sky, true)
+
+    entry.positions = asset.push_vertices(&group.positions, 8)
+    vertices := entry.positions.memory
+    vertices[0] = {-1.0, -1.0, -1.0}
+    vertices[1] = { 1.0, -1.0, -1.0}
+    vertices[2] = {-1.0, -1.0,  1.0}
+    vertices[3] = { 1.0, -1.0,  1.0}
+    vertices[4] = {-1.0,  1.0, -1.0}
+    vertices[5] = { 1.0,  1.0, -1.0}
+    vertices[6] = {-1.0,  1.0,  1.0}
+    vertices[7] = { 1.0,  1.0,  1.0}
+
+    entry.indices = asset.push_vertices(&group.indices, 36)
+    indices := entry.indices.memory
+    indices[0] = 0;  indices[1] = 1;  indices[2] = 2
+    indices[3] = 1;  indices[4] = 2;  indices[5] = 3
+    indices[6] = 0;  indices[7] = 1;  indices[8] = 4
+    indices[9] = 1;  indices[10] = 4; indices[11] = 5
+    indices[12] = 0; indices[13] = 2; indices[14] = 4
+    indices[15] = 2; indices[16] = 4; indices[17] = 6
+    indices[18] = 1; indices[19] = 3; indices[20] = 5
+    indices[21] = 3; indices[22] = 5; indices[23] = 7
+    indices[24] = 4; indices[25] = 5; indices[26] = 6
+    indices[27] = 5; indices[28] = 6; indices[29] = 7
+    indices[30] = 2; indices[31] = 6; indices[32] = 7
+    indices[33] = 2; indices[34] = 7; indices[35] = 3
+}

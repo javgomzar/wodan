@@ -79,11 +79,12 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     
         if memory.testing {
             test_string := "!\"#$%&'()*+,-./0123456789:;<=>?@\nABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`\nabcdefghijklmnopqrstuvwxyz{|}~"
-            common.push_text(render_group, test_string, 100, 300, 200 - 30*math.cos(memory.time), font_name = "BlackChancery")
+            common.push_text(render_group, test_string, 100, 300, 100 - 30*math.cos(memory.time), font_name = "BlackChancery")
         }
     }
 
     update_camera(&render_group.camera, input)
+    common.push_sky(render_group)
 
     if input.keyboard.key[.F1].just_pressed {
         memory.debug = !memory.debug

@@ -40,6 +40,7 @@ Shader_ID :: enum {
     Vertex_World,
     Vertex_Mesh,
     Vertex_Text,
+    Vertex_Sky,
 
     Pixel_Color,
     Pixel_Mesh,
@@ -49,6 +50,7 @@ Shader_ID :: enum {
     Pixel_Bezier_Interior_Stencil,
     Pixel_Bezier_Exterior_Color,
     Pixel_Bezier_Interior_Color,
+    Pixel_Sky,
 }
 
 get_shader_path :: proc(id: Shader_ID) -> string {
@@ -61,6 +63,7 @@ get_shader_path :: proc(id: Shader_ID) -> string {
         case .Vertex_Passthrough:            return "file/shader/HLSL/vertex/passthrough.vsh"
         case .Vertex_Mesh:                   return "file/shader/HLSL/vertex/mesh.vsh"
         case .Vertex_Text:                   return "file/shader/HLSL/vertex/text.vsh"
+        case .Vertex_Sky:                    return "file/shader/HLSL/vertex/sky.vsh"
 
         case .Pixel_Color:                   return "file/shader/HLSL/pixel/color.psh"
         case .Pixel_Mesh:                    return "file/shader/HLSL/pixel/mesh.psh"
@@ -70,6 +73,7 @@ get_shader_path :: proc(id: Shader_ID) -> string {
         case .Pixel_Bezier_Interior_Stencil: return "file/shader/HLSL/pixel/bezier_interior_stencil.psh"
         case .Pixel_Bezier_Exterior_Color:   return "file/shader/HLSL/pixel/bezier_exterior_color.psh"
         case .Pixel_Bezier_Interior_Color:   return "file/shader/HLSL/pixel/bezier_interior_color.psh"
+        case .Pixel_Sky:                     return "file/shader/HLSL/pixel/sky.psh"
     }
     return ""
 }
@@ -91,6 +95,7 @@ Shader_Pipeline_ID :: enum {
 // 3D
     Grid,
     Mesh,
+    Sky,
 }
 
 Shader_Pipeline_Entry :: struct {
@@ -125,20 +130,6 @@ shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
         stage = #partial {
             .Vertex = .Vertex_Text,
         }
-    },
-    .Grid = {
-        primitive = .LINE,
-        stage = #partial {
-            .Vertex = .Vertex_World,
-            .Pixel = .Pixel_Color,
-        },
-    },
-    .Mesh = {
-        primitive = .TRIANGLE,
-        stage = #partial {
-            .Vertex = .Vertex_Mesh,
-            .Pixel = .Pixel_Mesh,
-        },
     },
     .Text_Bezier_Exterior_Stencil = {
         primitive = .TRIANGLE,
@@ -186,6 +177,28 @@ shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
         stage = #partial {
             .Vertex = .Vertex_Text,
         }
+    },
+
+    .Grid = {
+        primitive = .LINE,
+        stage = #partial {
+            .Vertex = .Vertex_World,
+            .Pixel = .Pixel_Color,
+        },
+    },
+    .Mesh = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Mesh,
+            .Pixel = .Pixel_Mesh,
+        },
+    },
+    .Sky = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Sky,
+            .Pixel = .Pixel_Sky,
+        },
     }
 }
 
@@ -695,6 +708,8 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
                 StencilFailOp = .ZERO,
                 StencilDepthFailOp = .ZERO,
             }
+        case .Sky:
+            depth_stencil_desc.DepthFunc = .LESS_EQUAL
     }
 
     pixel_shader := &renderer.shaders[entry.stage[.Pixel]]
