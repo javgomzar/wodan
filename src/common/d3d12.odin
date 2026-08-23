@@ -178,17 +178,22 @@ Renderer_Context :: struct {
     depth_stencil:              ^d3d12.IResource,
     msaa_target:                ^d3d12.IResource,
     msaa_depth_stencil:         ^d3d12.IResource,
-    static_buffers:               struct {
+    static_buffers:             struct {
         position:               ^d3d12.IResource,
         attribute:              ^d3d12.IResource,
         index:                  ^d3d12.IResource,
     },
-    dynamic_buffers:            struct {
+    dynamic_buffers:            [N_BACK_BUFFERS]struct {
         position:               ^d3d12.IResource,
+        position_memory:        rawptr,
         attribute:              ^d3d12.IResource,
+        attribute_memory:        rawptr,
         index:                  ^d3d12.IResource,
-        text_instances:         ^d3d12.IResource,
-        text_offsets:           ^d3d12.IResource,
+        index_memory:           rawptr,
+        text_instance:          ^d3d12.IResource,
+        text_instance_memory:   rawptr,
+        text_offset:            ^d3d12.IResource,
+        text_offset_memory:     rawptr,
     },
     root_signature:             ^d3d12.IRootSignature,
     shader_compiler:            DXC_Compiler,
@@ -630,45 +635,43 @@ initialize_renderer :: proc(
     }
 
     // Dynamic vertex buffers
-    render_group.positions.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Position)
-    dynamic_positions: rawptr
-    renderer.dynamic_buffers.position, dynamic_positions = create_mapped_buffer(
-        renderer.device, 
-        u32(render_group.positions.capacity * size_of(asset.Vertex_Position))
-    )
-    render_group.positions.memory = cast([^]asset.Vertex_Position)dynamic_positions
-
-    render_group.attributes.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Attributes)
-    dynamic_attributes: rawptr
-    renderer.dynamic_buffers.attribute, dynamic_attributes = create_mapped_buffer(
-        renderer.device, 
-        u32(render_group.attributes.capacity * size_of(asset.Vertex_Attributes))
-    )
-    render_group.attributes.memory = cast([^]asset.Vertex_Attributes)dynamic_attributes
+    for i in 0..<N_BACK_BUFFERS {
+        render_group.positions.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Position)
+        renderer.dynamic_buffers[i].position, renderer.dynamic_buffers[i].position_memory = create_mapped_buffer(
+            renderer.device,
+            u32(render_group.positions.capacity * size_of(asset.Vertex_Position))
+        )
     
-    render_group.indices.capacity = DYNAMIC_BUFFER_SIZE / size_of(u32)
-    dynamic_indices: rawptr
-    renderer.dynamic_buffers.index, dynamic_indices = create_mapped_buffer(
-        renderer.device, 
-        u32(render_group.indices.capacity * size_of(u32))
-    )
-    render_group.indices.memory = cast([^]u32)dynamic_indices
+        render_group.attributes.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Attributes)
+        renderer.dynamic_buffers[i].attribute, renderer.dynamic_buffers[i].attribute_memory = create_mapped_buffer(
+            renderer.device,
+            u32(render_group.attributes.capacity * size_of(asset.Vertex_Attributes))
+        )
+        
+        render_group.indices.capacity = DYNAMIC_BUFFER_SIZE / size_of(u32)
+        renderer.dynamic_buffers[i].index, renderer.dynamic_buffers[i].index_memory = create_mapped_buffer(
+            renderer.device, 
+            u32(render_group.indices.capacity * size_of(u32))
+        )
+    
+        render_group.text_vertices.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Text)
+        renderer.dynamic_buffers[i].text_instance, renderer.dynamic_buffers[i].text_instance_memory = create_mapped_buffer(
+            renderer.device, 
+            u32(render_group.text_vertices.capacity * size_of(asset.Vertex_Text))
+        )
+    
+        render_group.text_offsets.capacity = DYNAMIC_BUFFER_SIZE / size_of(u32)
+        renderer.dynamic_buffers[i].text_offset, renderer.dynamic_buffers[i].text_offset_memory = create_mapped_buffer(
+            renderer.device, 
+            u32(render_group.text_offsets.capacity * size_of(u32))
+        )
+    }
 
-    render_group.text_vertices.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Text)
-    dynamic_text_vertices: rawptr
-    renderer.dynamic_buffers.text_instances, dynamic_text_vertices = create_mapped_buffer(
-        renderer.device, 
-        u32(render_group.text_vertices.capacity * size_of(asset.Vertex_Text))
-    )
-    render_group.text_vertices.memory = cast([^]asset.Vertex_Text)dynamic_text_vertices
-
-    render_group.text_offsets.capacity = DYNAMIC_BUFFER_SIZE / size_of(u32)
-    dynamic_text_offsets: rawptr
-    renderer.dynamic_buffers.text_offsets, dynamic_text_offsets = create_mapped_buffer(
-        renderer.device, 
-        u32(render_group.text_offsets.capacity * size_of(u32))
-    )
-    render_group.text_offsets.memory = cast([^]u32)dynamic_text_offsets
+    render_group.indices.memory = cast([^]u32)renderer.dynamic_buffers[0].position_memory
+    render_group.positions.memory = cast([^]asset.Vertex_Position)renderer.dynamic_buffers[0].attribute_memory
+    render_group.attributes.memory = cast([^]asset.Vertex_Attributes)renderer.dynamic_buffers[0].index_memory
+    render_group.text_vertices.memory = cast([^]asset.Vertex_Text)renderer.dynamic_buffers[0].text_instance_memory
+    render_group.text_offsets.memory = cast([^]u32)renderer.dynamic_buffers[0].text_offset_memory
 
     // Constant buffers
     for i in 0..<N_BACK_BUFFERS {
@@ -1026,15 +1029,15 @@ render :: proc(memory: ^Game_Memory) {
         per_draw_data_address := allocate_from_ring_buffer(ring_buffer, per_draw_data)
         renderer.command_list->SetGraphicsRootConstantBufferView(2, per_draw_data_address)
 
-        positions := entry.dynamic_buffer ? renderer.dynamic_buffers.position : renderer.static_buffers.position
-        attributes := entry.dynamic_buffer ? renderer.dynamic_buffers.attribute : renderer.static_buffers.attribute
-        indices := entry.dynamic_buffer ? renderer.dynamic_buffers.index : renderer.static_buffers.index
+        positions := entry.dynamic_buffer ? renderer.dynamic_buffers[frame_index].position : renderer.static_buffers.position
+        attributes := entry.dynamic_buffer ? renderer.dynamic_buffers[frame_index].attribute : renderer.static_buffers.attribute
+        indices := entry.dynamic_buffer ? renderer.dynamic_buffers[frame_index].index : renderer.static_buffers.index
         
         if entry.instances.count > 0 {
             renderer.command_list->SetGraphicsRootShaderResourceView(3, 
-                renderer.dynamic_buffers.text_instances->GetGPUVirtualAddress())
+                renderer.dynamic_buffers[frame_index].text_instance->GetGPUVirtualAddress())
             renderer.command_list->SetGraphicsRootShaderResourceView(4, 
-                renderer.dynamic_buffers.text_offsets->GetGPUVirtualAddress() + u64(entry.instances.offset * size_of(u32)))
+                renderer.dynamic_buffers[frame_index].text_offset->GetGPUVirtualAddress() + u64(entry.instances.offset * size_of(u32)))
         }
         else {
             entry.instances.count = 1
@@ -1128,6 +1131,13 @@ render :: proc(memory: ^Game_Memory) {
     asset.clear_vertex_buffer(&group.indices)
     asset.clear_vertex_buffer(&group.text_vertices)
     asset.clear_vertex_buffer(&group.text_offsets)
+
+    next_frame_index := (frame_index + 1) % N_BACK_BUFFERS
+    group.positions.memory = cast([^]asset.Vertex_Position)renderer.dynamic_buffers[next_frame_index].position_memory
+    group.attributes.memory = cast([^]asset.Vertex_Attributes)renderer.dynamic_buffers[next_frame_index].attribute_memory
+    group.indices.memory = cast([^]u32)renderer.dynamic_buffers[next_frame_index].index_memory
+    group.text_vertices.memory = cast([^]asset.Vertex_Text)renderer.dynamic_buffers[next_frame_index].text_instance_memory
+    group.text_offsets.memory = cast([^]u32)renderer.dynamic_buffers[next_frame_index].text_offset_memory
 }
 
 }

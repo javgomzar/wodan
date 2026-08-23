@@ -73,10 +73,10 @@ test_asset_loading :: proc(t: ^testing.T, manager: ^asset.Manager, path: string,
             loaded_glyph := loaded_font.glyphs[g_index]
             testing.expect(t, glyph.id == loaded_glyph.id)
             testing.expect(t, glyph.code == loaded_glyph.code)
-            testing.expect(t, glyph.left == loaded_glyph.left)
-            testing.expect(t, glyph.top == loaded_glyph.top)
-            testing.expect(t, glyph.width == loaded_glyph.width)
-            testing.expect(t, glyph.height == loaded_glyph.height)
+            testing.expect(t, glyph.min_x == loaded_glyph.min_x)
+            testing.expect(t, glyph.max_x == loaded_glyph.max_x)
+            testing.expect(t, glyph.min_y == loaded_glyph.min_y)
+            testing.expect(t, glyph.max_y == loaded_glyph.max_y)
             testing.expect(t, glyph.composite == loaded_glyph.composite)
             if glyph.composite {
                 for child, c_index in glyph.children {

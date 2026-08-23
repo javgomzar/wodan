@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
+import "core:fmt"
 import "../asset"
 
 
@@ -315,18 +316,18 @@ push_mesh :: proc(
     }
 }
 
+DPI :: 96.0
+
 push_text :: proc(
     group: ^Render_Group,
     text: string,
     pen_x: f32, pen_y: f32,
     points: f32,
-    font_name: string = "DejaVuSansMono",
+    font: ^asset.Font,
     color: [4]f32 = {1, 1, 1, 1},
 ) {
-    font := asset.get_font_by_name(group.asset_manager, font_name)
     pen: [2]f32 = {pen_x, pen_y}
 
-    DPI :: 96.0
     size := points * (DPI / 72.0) / font.units_per_em
     for i in 0..<len(text) {
         char := text[i]
@@ -381,10 +382,13 @@ send_render_text_commands :: proc(group: ^Render_Group) {
                     entry_cover.positions = asset.push_vertices(&group.positions, 4)
                     entry_cover.instances = instances
                     entry_cover_vertices := &entry_cover.positions.memory
-                    entry_cover_vertices[0] = {glyph.left, glyph.top, 0}
-                    entry_cover_vertices[1] = {glyph.left + glyph.width, glyph.top, 0}
-                    entry_cover_vertices[2] = {glyph.left, glyph.top + glyph.height, 0}
-                    entry_cover_vertices[3] = {glyph.left + glyph.width, glyph.top + glyph.height, 0}
+
+                    glyph_width := glyph.max_x - glyph.min_x
+
+                    entry_cover_vertices[0] = {glyph.min_x, glyph.max_y, 0}
+                    entry_cover_vertices[1] = {glyph.max_x, glyph.max_y, 0}
+                    entry_cover_vertices[2] = {glyph.min_x, glyph.min_y, 0}
+                    entry_cover_vertices[3] = {glyph.max_x, glyph.min_y, 0}
 
                     if glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices > 0 {
                         bezier_triangles_pass := add_entry(group, .Triangle, .Text_Stencil, false)
@@ -461,4 +465,80 @@ push_sky :: proc(group: ^Render_Group) {
     indices[27] = 5; indices[28] = 6; indices[29] = 7
     indices[30] = 2; indices[31] = 6; indices[32] = 7
     indices[33] = 2; indices[34] = 7; indices[35] = 3
+}
+
+get_text_width :: proc(font: ^asset.Font, text: string, points: f32) -> (result: f32) {
+    size := points * (DPI / 72.0) / font.units_per_em
+
+    line_width: f32
+    for char in text {
+        if char == ' ' {
+            line_width += size * font.space_advance
+            continue
+        }
+
+        if char == '\n' {
+            if line_width > result do result = line_width
+            line_width = 0
+            continue
+        }
+
+        line_width += size * asset.get_glyph(font, i32(char)).advance
+    }
+
+    if line_width > result do result = line_width
+    return
+}
+
+get_text_rect :: proc(font: ^asset.Font, text: string, pen_x: f32, pen_y: f32, points: f32) -> (result: asset.Rect) {
+    size := points * (DPI / 72.0) / font.units_per_em
+
+    result.left = pen_x
+    result.top = max(f32)
+
+    line_width: f32
+    nth_line: int
+    line_min_y: f32
+    for char in text {
+        if char == ' ' {
+            line_width += size * font.space_advance
+            continue
+        }
+
+        if char == '\n' {
+            if line_width > result.width do result.width = line_width
+            line_width = 0
+            line_min_y = 0
+            nth_line += 1
+
+            continue
+        }
+
+        glyph := asset.get_glyph(font, i32(char))
+        line_width += size * glyph.advance
+        line_min_y = min(line_min_y, size * glyph.min_y)
+        
+        if nth_line == 0 {
+            result.top = min(result.top, pen_y - size * glyph.max_y)
+        }
+    }
+
+    if line_width > result.width do result.width = line_width
+
+    result.height = pen_y + size * (f32(nth_line) * font.line_jump - line_min_y) - result.top
+
+    return
+}
+
+push_debug_overlay :: proc(group: ^Render_Group, time: f32, FPS: int) {
+    font := group.asset_manager.catalog.debug_font
+    pad := f32(10)
+    points := f32(16)
+    size := points * (DPI / 72.0) / font.units_per_em
+
+    str := fmt.tprintf("FPS: %d\nTime: %f", FPS, time)
+    rect := get_text_rect(font, str, 0, 0, points)
+    
+    push_text(group, str, pad, pad - rect.top, points, font)
+    push_rect(group, 0, 0, rect.width + 2*pad, rect.height + 2*pad, color = {0.2, 0.2, 0.2, 0.5})
 }

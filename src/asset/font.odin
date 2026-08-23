@@ -26,9 +26,10 @@ Glyph_Composite_Record :: struct {
 Glyph :: struct {
     id:                        i32,
     code:                      i32,
-    left, top:                 f32,
-    width, height:             f32,
+    min_x, max_x:              f32,
+    min_y, max_y:              f32,
     advance:                   f32,
+    left_side_bearing:         f32,
     composite:                 bool,
     contours:                  []Glyph_Contour,
     children:                  []Glyph_Composite_Record,
@@ -56,6 +57,12 @@ Font :: struct {
     glyph_id_to_index:    map[i32]i32,
     glyphs_offset:        u64,
     cells_offset:         u64,
+}
+
+get_glyph :: proc(font: ^Font, code: i32) -> ^Glyph {
+    index, ok := font.code_to_index[code]
+    if !ok do index = 0
+    return &font.glyphs[index]
 }
 
 FWORD :: distinct i16be
@@ -461,15 +468,16 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
         // metrics
         if glyph_id < n_hmetrics {
             glyph.advance = f32(horizontal_metrics_table[glyph_id].advance_width)
-            glyph.left = f32(horizontal_metrics_table[glyph_id].left_side_bearing)
+            glyph.left_side_bearing = f32(horizontal_metrics_table[glyph_id].left_side_bearing)
         }
         else {
             glyph.advance = f32(horizontal_metrics_table[n_hmetrics-1].advance_width)
-            glyph.left = f32(other_left_side_bearings[glyph_id - n_hmetrics])
+            glyph.left_side_bearing = f32(other_left_side_bearings[glyph_id - n_hmetrics])
         }
-        glyph.width = f32(glyph_header.max_x - glyph_header.min_x)
-        glyph.height = f32(glyph_header.max_y - glyph_header.min_y)
-        glyph.top = -f32(glyph_header.max_y)
+        glyph.min_x = f32(glyph_header.min_x)
+        glyph.max_x = f32(glyph_header.max_x)
+        glyph.min_y = f32(glyph_header.min_y)
+        glyph.max_y = f32(glyph_header.max_y)
 
         if glyph_header.n_contours == 0 {
             log.warn("Glyph", glyph_id, "has zero contours for font", result.name)
@@ -562,7 +570,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                         point := Glyph_Contour_Point{
                             on_curve = true,
                             x = 0.5 * (f32(x) + f32(last_x)),
-                            y = -0.5 * (f32(y) + f32(last_y)),
+                            y = 0.5 * (f32(y) + f32(last_y)),
                         }
                         append(&points, point)
                     }
@@ -570,7 +578,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                     point := Glyph_Contour_Point{
                         on_curve = on_curve,
                         x = f32(x),
-                        y = -f32(y),
+                        y = f32(y),
                     }
                     append(&points, point)
 
@@ -732,13 +740,13 @@ load_font_vertices :: proc(font: ^Font, positions: ^[dynamic]Vertex_Position, in
                     end_index := (point_index_in_contour + 1) % len(contour.points)
                     end := contour.points[end_index]
                     area := get_area({{start.x, start.y}, {point.x, point.y}, {end.x, end.y}})
-                    if area < 0 {
+                    if area > 0 {
                         append(&triangle_fan_vertices, u32(point_index_in_glyph))
                         append(&glyph_interior_bezier_indices, u32(first_contour_point_index + start_index))
                         append(&glyph_interior_bezier_indices, u32(point_index_in_glyph))
                         append(&glyph_interior_bezier_indices, u32(first_contour_point_index + end_index))
                     }
-                    else if area > 0 {
+                    else if area < 0 {
                         append(&glyph_exterior_bezier_indices, u32(first_contour_point_index + start_index))
                         append(&glyph_exterior_bezier_indices, u32(point_index_in_glyph))
                         append(&glyph_exterior_bezier_indices, u32(first_contour_point_index + end_index))

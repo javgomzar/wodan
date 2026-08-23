@@ -138,6 +138,5 @@ main :: proc() {
         memory.time += seconds_elapsed
         memory.delta_time = seconds_elapsed
         last_counter = end_counter
-        fmt.printf("FPS: %d\n", i32(1.0 / seconds_elapsed))
     }
 }

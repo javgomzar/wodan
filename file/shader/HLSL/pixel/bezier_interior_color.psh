@@ -1,7 +1,6 @@
 struct VS_OUT {
     float4 sv_position: SV_POSITION;
     float4 color: COLOR;
-    float2 position: POSITION;
     float3 barycentric: SV_Barycentrics;
 };
 

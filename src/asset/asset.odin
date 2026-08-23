@@ -46,10 +46,15 @@ Asset :: struct {
     released:     bool,
 }
 
+Catalog :: struct {
+    debug_font: ^Font,
+}
+
 Manager :: struct {
     next_asset_id:    ID,
     system_asset_id:  ID,
     language:         Language,
+    catalog:          Catalog,
     assets:           [dynamic]Asset,
 }
 

@@ -225,7 +225,7 @@ deserialize_glyph_contour :: proc(memory: []byte) -> (result: Glyph_Contour, siz
 }
 
 get_serialized_size_glyph :: proc(glyph: Glyph) -> (size: int) {
-    size += 7 * size_of(f32) + size_of(bool)
+    size += 8 * size_of(f32) + size_of(bool)
     if glyph.composite {
         size += get_serialized_size_slice(glyph.children)
     }
@@ -245,21 +245,24 @@ serialize_glyph :: proc(memory: []byte, glyph: Glyph) -> (size: int) {
     dump_to_memory(block, glyph.code)
     block = block[size_of(glyph.code):]
     size += size_of(glyph.code)
-    dump_to_memory(block, glyph.left)
-    block = block[size_of(glyph.left):]
-    size += size_of(glyph.left)
-    dump_to_memory(block, glyph.top)
-    block = block[size_of(glyph.top):]
-    size += size_of(glyph.top)
-    dump_to_memory(block, glyph.width)
-    block = block[size_of(glyph.width):]
-    size += size_of(glyph.width)
-    dump_to_memory(block, glyph.height)
-    block = block[size_of(glyph.height):]
-    size += size_of(glyph.height)
+    dump_to_memory(block, glyph.min_x)
+    block = block[size_of(glyph.min_x):]
+    size += size_of(glyph.min_x)
+    dump_to_memory(block, glyph.max_x)
+    block = block[size_of(glyph.max_x):]
+    size += size_of(glyph.max_x)
+    dump_to_memory(block, glyph.min_y)
+    block = block[size_of(glyph.min_y):]
+    size += size_of(glyph.min_y)
+    dump_to_memory(block, glyph.max_y)
+    block = block[size_of(glyph.max_y):]
+    size += size_of(glyph.max_y)
     dump_to_memory(block, glyph.advance)
     block = block[size_of(glyph.advance):]
     size += size_of(glyph.advance)
+    dump_to_memory(block, glyph.left_side_bearing)
+    block = block[size_of(glyph.left_side_bearing):]
+    size += size_of(glyph.left_side_bearing)
     dump_to_memory(block, glyph.composite)
     block = block[size_of(glyph.composite):]
     size += size_of(glyph.composite)
@@ -290,19 +293,22 @@ deserialize_glyph :: proc(memory: []byte) -> (result: Glyph, size: int) {
     result.code = extract_from_memory(block, i32)
     block = block[size_of(i32):]
     size += size_of(i32)
-    result.left = extract_from_memory(block, f32)
+    result.min_x = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)
-    result.top = extract_from_memory(block, f32)
+    result.max_x = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)
-    result.width = extract_from_memory(block, f32)
+    result.min_y = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)
-    result.height = extract_from_memory(block, f32)
+    result.max_y = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)
     result.advance = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.left_side_bearing = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)
     result.composite = extract_from_memory(block, bool)

@@ -641,7 +641,8 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
                 StencilDepthFailOp = .KEEP,
             }
         case .Text_Bezier_Exterior_Color, .Text_Bezier_Interior_Color:
-            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.DepthFunc = .ALWAYS
+            depth_stencil_desc.DepthWriteMask = .ZERO
             depth_stencil_desc.StencilEnable = w32.TRUE
             depth_stencil_desc.StencilReadMask = 0xff
             depth_stencil_desc.StencilWriteMask = 0xff
@@ -674,8 +675,9 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
                 StencilFailOp = .KEEP,
                 StencilDepthFailOp = .KEEP,
             }
-        case .Text_Cover: 
-            depth_stencil_desc.DepthEnable = w32.FALSE
+        case .Text_Cover:
+            depth_stencil_desc.DepthFunc = .ALWAYS
+            depth_stencil_desc.DepthWriteMask = .ZERO
             depth_stencil_desc.StencilEnable = w32.TRUE
             depth_stencil_desc.StencilReadMask = 0xff
             depth_stencil_desc.StencilWriteMask = 0xff

@@ -35,6 +35,8 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
         else do asset.load(&game_asset)
     }
 
+    asset_manager.catalog.debug_font = asset.get_font_by_name(asset_manager, "DejaVuSansMono")
+
     common.initialize_renderer(&memory.asset_manager, &memory.renderer, &memory.render_group)
     memory.initialized = true
 }
@@ -52,6 +54,9 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     system_asset := &asset_manager.assets[asset_manager.system_asset_id]
     input := &memory.input
 
+    update_camera(&render_group.camera, input)
+    common.push_sky(render_group)
+
     // Testing & debugging
     when ODIN_DEBUG {
         if memory.debug {
@@ -65,6 +70,8 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
                 scale = {10, 10, 10},
                 color = {1, 1, 1, 0.4},
             )
+
+            common.push_debug_overlay(render_group, memory.time, int(1.0 / memory.delta_time))
         }
 
         if input.keyboard.key[.Control].is_down && input.keyboard.key[.T].just_pressed {
@@ -79,12 +86,14 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     
         if memory.testing {
             test_string := "!\"#$%&'()*+,-./0123456789:;<=>?@\nABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`\nabcdefghijklmnopqrstuvwxyz{|}~"
-            common.push_text(render_group, test_string, 100, 300, 100 - 30*math.cos(memory.time), font_name = "BlackChancery")
+            common.push_text(
+                render_group, 
+                test_string, 
+                100, 300, 100 - 30*math.cos(memory.time), 
+                font = asset.get_font_by_name(asset_manager, "BlackChancery")
+            )
         }
     }
-
-    update_camera(&render_group.camera, input)
-    common.push_sky(render_group)
 
     if input.keyboard.key[.F1].just_pressed {
         memory.debug = !memory.debug
