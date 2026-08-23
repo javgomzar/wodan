@@ -76,11 +76,10 @@ Render_Entry :: struct {
     pipeline:         Shader_Pipeline_ID,
     positions:        asset.Vertex_Buffer_Entry(asset.Vertex_Position),
     attributes:       asset.Vertex_Buffer_Entry(asset.Vertex_Attributes),
-    text_vertices:    asset.Vertex_Buffer_Entry(asset.Vertex_Text),
     indices:          asset.Vertex_Buffer_Entry(u32),
+    instances:        asset.Vertex_Buffer_Entry(u32),
     transform:        matrix[4, 4]f32,
     color:            [4]f32,
-    font:             ^asset.Font,
     material:         ^asset.Material,
     texture:          ^asset.Texture,
     dynamic_buffer:   bool,
@@ -96,6 +95,7 @@ Render_Group :: struct {
     positions:     asset.Vertex_Buffer(asset.Vertex_Position),
     attributes:    asset.Vertex_Buffer(asset.Vertex_Attributes),
     text_vertices: asset.Vertex_Buffer(asset.Vertex_Text),
+    text_offsets:  asset.Vertex_Buffer(u32),
     indices:       asset.Vertex_Buffer(u32),
     commands:      [dynamic]Render_Entry,
 }
@@ -121,15 +121,15 @@ initialize_render_group :: proc(group: ^Render_Group, asset_manager: ^asset.Mana
 }
 
 add_entry :: proc(
-    group: ^Render_Group,
-    topology: asset.Topology,
-    pipeline: Shader_Pipeline_ID,
+    group:          ^Render_Group,
+    topology:       asset.Topology,
+    pipeline:       Shader_Pipeline_ID,
     dynamic_buffer: bool,
-    key: Sort_Key = 0,
-    transform: matrix[4, 4]f32 = 1,
-    material: ^asset.Material = nil,
-    texture: ^asset.Texture = nil,
-    color: [4]f32 = {1, 1, 1, 1},
+    key:            Sort_Key = 0,
+    transform:      matrix[4, 4]f32 = 1,
+    material:       ^asset.Material = nil,
+    texture:        ^asset.Texture = nil,
+    color:          [4]f32 = {1, 1, 1, 1},
 ) -> ^Render_Entry {
     entry := Render_Entry{
         topology = topology,
@@ -146,6 +146,24 @@ add_entry :: proc(
     return &group.commands[len(group.commands) - 1]
 }
 
+push_point :: proc(group: ^Render_Group, point: [2]f32, color: [4]f32 = {1, 1, 1, 1}) {
+    push_rect(group, point.x, point.y, 2, 2, color = color)
+}
+
+push_segment :: proc(group: ^Render_Group, start: [2]f32, end: [2]f32, color: [4]f32 = {1, 1, 1, 1}) {
+    entry := add_entry(group, 
+        .Line,
+        .Screen_Line,
+        dynamic_buffer = true,
+        color = color,
+    )
+
+    entry.positions = asset.push_vertices(&group.positions, 2)
+    vertices := entry.positions.memory
+    vertices[0] = {start.x, start.y, 0}
+    vertices[1] = {end.x, end.y, 0}
+}
+
 push_rect :: proc(
     group: ^Render_Group,
     left: f32, top: f32,
@@ -153,11 +171,13 @@ push_rect :: proc(
     texture: ^asset.Texture = nil, 
     color: [4]f32 = {1, 1, 1, 1}
 ) {
+    pipeline: Shader_Pipeline_ID = texture != nil ? .Screen_Texture : .Screen_Triangle
     entry := add_entry(group,
         topology = .Triangle_Strip,
-        pipeline = .Text_Pipeline,
+        pipeline = pipeline,
         dynamic_buffer = true,
         texture = texture,
+        color = color,
     )
 
     entry.positions = asset.push_vertices(&group.positions, 4)
@@ -175,29 +195,91 @@ push_rect :: proc(
     attributes[3] = { color = color, texture = {1, 0} }
 }
 
+push_rect_outline :: proc(
+    group: ^Render_Group,
+    left: f32, top: f32,
+    width: f32, height: f32,
+    color: [4]f32 = {1, 1, 1, 1}
+) {
+    entry := add_entry(group,
+        topology = .Line_Strip,
+        pipeline = .Screen_Line,
+        dynamic_buffer = true,
+        color = color,
+    )
+
+    entry.positions = asset.push_vertices(&group.positions, 5)
+    vertices := entry.positions.memory
+    vertices[0] = { left, top, 0 }
+    vertices[1] = { left + width, top, 0 }
+    vertices[2] = { left + width, top + height, 0 }
+    vertices[3] = { left, top + height, 0 }
+    vertices[4] = { left, top, 0 }
+}
+
 push_triangle :: proc(
     group: ^Render_Group,
-    triangle: Triangle2,
+    p0: [2]f32,
+    p1: [2]f32,
+    p2: [2]f32,
     color: [4]f32 = {1, 1, 1, 1},
 ) {
     entry := add_entry(group,
         topology = .Triangle,
-        pipeline = .Text_Pipeline,
+        pipeline = .Screen_Triangle,
         dynamic_buffer = true,
         color = color,
     )
 
     entry.positions = asset.push_vertices(&group.positions, 3)
     vertices := entry.positions.memory
-    vertices[0] = { triangle[0].x, triangle[0].y, 0 }
-    vertices[1] = { triangle[1].x, triangle[1].y, 0 }
-    vertices[2] = { triangle[2].x, triangle[2].y, 0 }
+    vertices[0] = { p0.x, p0.y, 0 }
+    vertices[1] = { p1.x, p1.y, 0 }
+    vertices[2] = { p2.x, p2.y, 0 }
+}
 
-    entry.attributes = asset.push_vertices(&group.attributes, 3)
-    attributes := entry.attributes.memory
-    attributes[0] = { color = color }
-    attributes[1] = { color = color }
-    attributes[2] = { color = color }
+push_triangle_fan :: proc(
+    group: ^Render_Group, 
+    pipeline: Shader_Pipeline_ID,
+    vertices: [][2]f32,
+    color: [4]f32 = {1, 1, 1, 1},
+) {
+    entry := add_entry(group, .Triangle, pipeline, true, color = color)
+
+    entry.positions = asset.push_vertices(&group.positions, len(vertices))
+    positions := entry.positions.memory
+    for vertex, index in vertices {
+        positions[index] = {vertex.x, vertex.y, 0}
+    }
+
+    entry.indices = asset.push_vertices(&group.indices, 3*(len(vertices) - 1))
+    indices := entry.indices.memory
+    for i in 0..<len(vertices)-2 {
+        indices[3*i]     = 0;
+        indices[3*i + 1] = u32(i+1);
+        indices[3*i + 2] = u32(i+2);
+    }
+    indices[3*(len(vertices)-2)] = 0
+    indices[3*(len(vertices)-2) + 1] = u32(len(vertices) - 1)
+    indices[3*(len(vertices)-2) + 2] = 1
+}
+
+push_circle :: proc(
+    group: ^Render_Group,
+    center: [2]f32,
+    radius: f32,
+    color: [4]f32 = {1, 1, 1, 1},
+) {
+    vertices := make([][2]f32, 64)
+    defer delete(vertices)
+    vertices[0] = center
+    for i in 1..<64 {
+        vertices[i] = {
+            center.x + radius * math.cos(math.TAU * f32(i) / 63.0),
+            center.y + radius * math.sin(math.TAU * f32(i) / 63.0),
+        }
+    }
+    push_triangle_fan(group, .Screen_Triangle, vertices, color)
 }
 
 push_mesh :: proc(
@@ -236,21 +318,21 @@ push_mesh :: proc(
 push_text :: proc(
     group: ^Render_Group,
     text: string,
-    left: f32, bottom: f32,
+    pen_x: f32, pen_y: f32,
     points: f32,
     font_name: string = "DejaVuSansMono",
     color: [4]f32 = {1, 1, 1, 1},
 ) {
     font := asset.get_font_by_name(group.asset_manager, font_name)
-    pen := [2]f32{left, bottom}
+    pen: [2]f32 = {pen_x, pen_y}
 
-    DPI :: 96
+    DPI :: 96.0
     size := points * (DPI / 72.0) / font.units_per_em
     for i in 0..<len(text) {
         char := text[i]
 
         if char == '\n' {
-            pen.x = left
+            pen.x = pen_x
             pen.y += size * font.line_jump
             continue
         }
@@ -262,11 +344,91 @@ push_text :: proc(
 
         index, ok := font.code_to_index[i32(char)]
         if !ok do index = 0
-        glyph := font.glyphs[index]
-        push_rect(group,
-            pen.x - 0.5 * size * glyph.left, pen.y - size * glyph.top, size * glyph.width, size * glyph.height, color = color
-        )
+        glyph := &font.glyphs[index]
 
-        pen.x += size * glyph.width
+        offset := u32(group.text_vertices.count)
+        text_vertices := asset.push_vertices(&group.text_vertices, 1)
+        text_vertices.memory[0] = {
+            pen = pen,
+            size = size,
+            depth = 0,
+            color = color,
+        }
+        append(&glyph.instances, offset)
+
+        pen.x += size * glyph.advance
+    }
+}
+
+send_render_text_commands :: proc(group: ^Render_Group) {
+    for &game_asset in group.asset_manager.assets[1:] {
+        for &font in game_asset.fonts {
+            for &glyph in font.glyphs {
+                if len(glyph.instances) > 0 {
+                    glyph.instances_offset = group.text_offsets.count
+
+                    instances := asset.push_vertices(&group.text_offsets, len(glyph.instances))
+                    copy(instances.memory, glyph.instances[:])
+
+                    positions := asset.static_vertices(glyph.n_positions, glyph.positions_offset, asset.Vertex_Position)
+
+                    winding_number_pass := add_entry(group, .Triangle, .Winding_Number, false)
+                    winding_number_pass.positions = positions
+                    winding_number_pass.instances = instances
+                    winding_number_pass.indices = asset.static_vertices(glyph.n_triangle_fan_indices, glyph.triangle_fan_offset, u32)
+
+                    entry_cover := add_entry(group, .Triangle_Strip, .Text_Cover, true)
+                    entry_cover.positions = asset.push_vertices(&group.positions, 4)
+                    entry_cover.instances = instances
+                    entry_cover_vertices := &entry_cover.positions.memory
+                    entry_cover_vertices[0] = {glyph.left, glyph.top, 0}
+                    entry_cover_vertices[1] = {glyph.left + glyph.width, glyph.top, 0}
+                    entry_cover_vertices[2] = {glyph.left, glyph.top + glyph.height, 0}
+                    entry_cover_vertices[3] = {glyph.left + glyph.width, glyph.top + glyph.height, 0}
+
+                    if glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices > 0 {
+                        bezier_triangles_pass := add_entry(group, .Triangle, .Text_Stencil, false)
+                        bezier_triangles_pass.positions = positions
+                        bezier_triangles_pass.instances = instances
+                        bezier_triangles_pass.indices = asset.static_vertices(
+                            glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices, glyph.interior_bezier_offset, u32)
+
+                        if glyph.n_interior_bezier_indices > 0 {
+                            bezier_interior_stencil_pass := add_entry(group, .Triangle, .Text_Bezier_Interior_Stencil, false)
+                            bezier_interior_stencil_pass.positions = positions
+                            bezier_interior_stencil_pass.instances = instances
+                            bezier_interior_stencil_pass.indices = asset.static_vertices(glyph.n_interior_bezier_indices, glyph.interior_bezier_offset, u32)
+                        }
+
+                        if glyph.n_exterior_bezier_indices > 0 {
+                            bezier_exterior_stencil_pass := add_entry(group, .Triangle, .Text_Bezier_Exterior_Stencil, false)
+                            bezier_exterior_stencil_pass.positions = positions
+                            bezier_exterior_stencil_pass.instances = instances
+                            bezier_exterior_stencil_pass.indices = asset.static_vertices(glyph.n_exterior_bezier_indices, glyph.exterior_bezier_offset, u32)
+                        }
+
+                        if glyph.n_interior_bezier_indices > 0 {
+                            bezier_interior_color_pass := add_entry(group, .Triangle, .Text_Bezier_Interior_Color, false)
+                            bezier_interior_color_pass.positions = positions
+                            bezier_interior_color_pass.instances = instances
+                            bezier_interior_color_pass.indices = asset.static_vertices(glyph.n_interior_bezier_indices, glyph.interior_bezier_offset, u32)
+                        }
+
+                        if glyph.n_exterior_bezier_indices > 0 {
+                            bezier_exterior_color_pass := add_entry(group, .Triangle, .Text_Bezier_Exterior_Color, false)
+                            bezier_exterior_color_pass.positions = positions
+                            bezier_exterior_color_pass.instances = instances
+                            bezier_exterior_color_pass.indices = asset.static_vertices(glyph.n_exterior_bezier_indices, glyph.exterior_bezier_offset, u32)
+                        }
+                    }
+
+                    entry_stencil_clean := add_entry(group, .Triangle_Strip, .Text_Clean_Stencil, true)
+                    entry_stencil_clean.positions = entry_cover.positions
+                    entry_stencil_clean.instances = instances
+
+                    clear(&glyph.instances)
+                }
+            }
+        }
     }
 }

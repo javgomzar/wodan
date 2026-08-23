@@ -1,6 +1,7 @@
 package game
 
 import "core:log"
+import "core:math"
 import "../common"
 import "../asset"
 
@@ -18,6 +19,7 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
     system_asset := &asset_manager.assets[asset_manager.system_asset_id]
     asset.add_file(system_asset, "file/asset/system/DejaVuSans.ttf")
     asset.add_file(system_asset, "file/asset/system/DejaVuSansMono.ttf")
+    asset.add_file(system_asset, "file/asset/system/BlackChancery.ttf")
     asset.add_file(system_asset, "file/asset/system/grid.glb")
     asset.add_file(system_asset, "file/asset/system/rgb_triangle.glb")
     asset.add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
@@ -40,6 +42,7 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
 @(export)
 reload_game_state :: proc(memory: ^common.Game_Memory) {
     common.set_up_timing(&memory.time_records)
+    common.initialize_shader_compiler(&memory.renderer.shader_compiler)
 }
 
 @(export)
@@ -66,25 +69,17 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
 
         if input.keyboard.key[.Control].is_down && input.keyboard.key[.T].just_pressed {
             memory.testing = !memory.testing
-            log.debug("Activating testing")
+            if memory.testing {
+                log.debug("Activating testing")
+            }
+            else {
+                log.debug("Deactivating testing")
+            }
         }
     
         if memory.testing {
-            rect := common.Rect{200, 200, 200, 200}
-
-            @(static) triangle := common.Triangle2{
-                {600, 600},
-                {500, 600},
-                {600, 500},
-            }
-            
-            if input.mouse.left_click.is_down {
-                triangle[2] = common.Point2(input.mouse.cursor)
-            }
-
-            color: [4]f32 = common.intersect_rect_with_triangle(rect, triangle) ? {0, 1, 0, 1} : {1, 0, 0, 1}
-            common.push_rect(render_group, rect.left, rect.top, rect.width, rect.height, color = {1, 1, 1, 1})
-            common.push_triangle(render_group, triangle, color = color)
+            test_string := "!\"#$%&'()*+,-./0123456789:;<=>?@\nABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`\nabcdefghijklmnopqrstuvwxyz{|}~"
+            common.push_text(render_group, test_string, 100, 300, 200 - 30*math.cos(memory.time), font_name = "BlackChancery")
         }
     }
 
@@ -100,8 +95,7 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
     texture := &system_asset.textures[0]
     common.push_mesh(render_group, cube, .Mesh, material = material, texture = texture, scale = {1, -1, 1})
 
-    common.push_text(render_group, "This is a test string !", 300, 300, 42)
-
+    common.send_render_text_commands(render_group)
     common.render(memory)
 
     common.print_timers()

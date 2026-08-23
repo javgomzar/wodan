@@ -12,7 +12,7 @@ import "../asset"
 when ODIN_OS == .Windows {
 
 N_BACK_BUFFERS  :: 3
-N_MSAA_SAMPLES  :: 4
+N_MSAA_SAMPLES  :: 8
 
 D3D12_Frame_Context :: struct {
     command_alloc: ^d3d12.ICommandAllocator,
@@ -32,11 +32,11 @@ D3D12_get_primitive_topology :: proc(primitive: asset.Topology) -> d3d12.PRIMITI
     return .POINTLIST
 }
 
-create_buffer :: proc(device: ^d3d12.IDevice, size: u32) -> ^d3d12.IResource {
+create_buffer :: proc(device: ^d3d12.IDevice, size: u32, type: d3d12.HEAP_TYPE) -> ^d3d12.IResource {
     assert(size > 0)
 
     properties := d3d12.HEAP_PROPERTIES{
-        Type = .UPLOAD,
+        Type = type,
         CPUPageProperty = .UNKNOWN,
         MemoryPoolPreference = .UNKNOWN,
         CreationNodeMask = 1,
@@ -60,14 +60,47 @@ create_buffer :: proc(device: ^d3d12.IDevice, size: u32) -> ^d3d12.IResource {
     }
 
     state: d3d12.RESOURCE_STATE
-    upload_buffer: ^d3d12.IResource
-    hr := device->CreateCommittedResource(&properties, {}, &resource_desc, d3d12.RESOURCE_STATE_GENERIC_READ, nil, d3d12.IResource_UUID, (^rawptr)(&upload_buffer))
+    buffer: ^d3d12.IResource
+    hr := device->CreateCommittedResource(
+        &properties, 
+        {}, 
+        &resource_desc, 
+        {}, 
+        nil, 
+        d3d12.IResource_UUID, 
+        (^rawptr)(&buffer)
+    )
     if hr < 0 do log.fatal("Failed to create D3D12 generic buffer")
 
-    return upload_buffer
+    return buffer
 }
 
-RING_BUFFER_SIZE :: mem.Megabyte
+create_mapped_buffer :: proc(device: ^d3d12.IDevice, size: u32) -> (^d3d12.IResource, rawptr) {
+    result: rawptr
+    buffer := create_buffer(device, size, .UPLOAD)
+    read_range := d3d12.RANGE{0, 0}
+    hr := buffer->Map(0, &read_range, &result)
+    if hr < 0 do log.fatal("Failed to map D3D12 buffer")
+    return buffer, result
+}
+
+create_and_upload_buffer :: proc(device: ^d3d12.IDevice, data: $T/[]$E) -> ^d3d12.IResource {
+    buffer, memory := create_mapped_buffer(device, u32(len(data) * size_of(E)))
+    dst := cast([^]E)memory
+    copy(dst[:len(data)], data)
+    buffer->Unmap(0, nil)
+    return buffer
+}
+
+create_static_buffer :: proc(renderer: ^Renderer_Context, data: $T/[]$E) -> ^d3d12.IResource {
+    size := u32(len(data) * size_of(E))
+    result := create_buffer(renderer.device, size, .DEFAULT)
+    upload_buffer := create_and_upload_buffer(renderer.device, data)
+    renderer.command_list->CopyBufferRegion(result, 0, upload_buffer, 0, u64(size))
+    return result
+}
+
+RING_BUFFER_SIZE :: 4 * mem.Megabyte
 
 D3D12_Ring_Buffer :: struct {
     using resource: ^d3d12.IResource,
@@ -145,13 +178,18 @@ Renderer_Context :: struct {
     depth_stencil:              ^d3d12.IResource,
     msaa_target:                ^d3d12.IResource,
     msaa_depth_stencil:         ^d3d12.IResource,
-    static_position_buffer:     ^d3d12.IResource,
-    static_attribute_buffer:    ^d3d12.IResource,
-    static_index_buffer:        ^d3d12.IResource,
-    dynamic_position_buffer:    ^d3d12.IResource,
-    dynamic_attribute_buffer:   ^d3d12.IResource,
-    dynamic_index_buffer:       ^d3d12.IResource,
-    text_buffer:                ^d3d12.IResource,
+    static_buffers:               struct {
+        position:               ^d3d12.IResource,
+        attribute:              ^d3d12.IResource,
+        index:                  ^d3d12.IResource,
+    },
+    dynamic_buffers:            struct {
+        position:               ^d3d12.IResource,
+        attribute:              ^d3d12.IResource,
+        index:                  ^d3d12.IResource,
+        text_instances:         ^d3d12.IResource,
+        text_offsets:           ^d3d12.IResource,
+    },
     root_signature:             ^d3d12.IRootSignature,
     shader_compiler:            DXC_Compiler,
     shaders:                    [Shader_ID]DXC_Shader,
@@ -243,8 +281,8 @@ initialize_renderer :: proc(
         (^rawptr)(&texture_upload_alloc)
     )
 
-    texture_barriers: [dynamic]d3d12.RESOURCE_BARRIER
-    defer delete(texture_barriers)
+    resource_barriers: [dynamic]d3d12.RESOURCE_BARRIER
+    defer delete(resource_barriers)
 
     texture_upload_fence: ^d3d12.IFence
     renderer.device->CreateFence(0, {}, d3d12.IFence_UUID, cast(^rawptr)&texture_upload_fence)
@@ -446,9 +484,11 @@ initialize_renderer :: proc(
         n_textures += u32(len(asset.textures))
     }
 
+    n_srv_descriptors := n_textures
+
     srv_handle: d3d12.CPU_DESCRIPTOR_HANDLE
     srv_heap_desc := d3d12.DESCRIPTOR_HEAP_DESC{
-        NumDescriptors = n_textures,
+        NumDescriptors = n_srv_descriptors,
         Type           = .CBV_SRV_UAV,
         Flags          = {.SHADER_VISIBLE}
     }
@@ -502,86 +542,81 @@ initialize_renderer :: proc(
     sampler_handle.ptr += uint(renderer.sampler_heap.descriptor_size)
     renderer.sampler_heap.descriptor_count += 1
 
+    DYNAMIC_BUFFER_SIZE :: 64 * mem.Kilobyte
+
+{
     // Vertex buffers
-    position_count: u32
-    attribute_count: u32
-    index_count: u32
+    static_positions: [dynamic]asset.Vertex_Position
+    defer delete(static_positions)
+    static_attributes: [dynamic]asset.Vertex_Attributes
+    defer delete(static_attributes)
+    static_indices: [dynamic]u32
+    defer delete(static_indices)
 
-    // Meshes
-    for asset in asset_manager.assets[1:] {
-        for mesh in asset.meshes {
-            for primitive in mesh.primitives {
-                position_count += u32(len(primitive.positions))
-                attribute_count += u32(len(primitive.attributes)) 
-                index_count += u32(len(primitive.indices))
-            }
-        }
-    }
-
-    renderer.static_position_buffer = create_buffer(renderer.device, position_count * size_of(asset.Vertex_Position))
-    renderer.static_attribute_buffer = create_buffer(renderer.device, attribute_count * size_of(asset.Vertex_Attributes))
-    if index_count > 0 {
-        renderer.static_index_buffer = create_buffer(renderer.device, index_count * size_of(u32))
-    }
-
-    mapped_position: rawptr = nil
-    mapped_attribute: rawptr = nil
-    mapped_index: rawptr = nil
-    read_range := d3d12.RANGE{0, 0}
-
-    hr = renderer.static_position_buffer->Map(0, &read_range, &mapped_position)
-    if hr < 0 do log.fatal("Failed to map D3D12 static position buffer")
-
-    hr = renderer.static_attribute_buffer->Map(0, &read_range, &mapped_attribute)
-    if hr < 0 do log.fatal("Failed to map D3D12 static attribute buffer")
-    
-    hr = renderer.static_index_buffer->Map(0, &read_range, &mapped_index)
-    if hr < 0 do log.fatal("Failed to map D3D12 static index buffer")
-
-    position_offset: int
-    attribute_offset: int
-    index_offset: int
-    position_ptr := cast([^]asset.Vertex_Position)mapped_position
-    attribute_ptr := cast([^]asset.Vertex_Attributes)mapped_attribute
-    index_ptr := cast([^]u32)mapped_index
-
-    for asset in asset_manager.assets[1:] {
-        for mesh in asset.meshes {
+    // Asset related vertex buffers: meshes and fonts
+    for &game_asset in asset_manager.assets[1:] {
+        for &mesh in game_asset.meshes {
             for &primitive in mesh.primitives {
-                if n_indices := len(primitive.indices); n_indices > 0 {
-                    copy(index_ptr[:n_indices], primitive.indices)
-                    index_ptr = index_ptr[n_indices:]
-                    primitive.index_offset = index_offset
-                    index_offset += n_indices
+                primitive.position_offset = len(static_positions)
+                append(&static_positions, ..primitive.positions)
+
+                if len(primitive.attributes) > 0 {
+                    primitive.attribute_offset = len(static_attributes)
+                    append(&static_attributes, ..primitive.attributes)
                 }
-
-                n_positions := len(primitive.positions)
-                if n_positions == 0 do log.fatal("Mesh has 0 positions")
-                copy(position_ptr[:n_positions], primitive.positions)
-                position_ptr = position_ptr[n_positions:]
-                primitive.position_offset = position_offset
-                position_offset += n_positions
-
-                if n_attributes := len(primitive.attributes); n_attributes > 0 {
-                    copy(attribute_ptr[:n_attributes], primitive.attributes)
-                    attribute_ptr = attribute_ptr[n_attributes:]
-                    primitive.attribute_offset = attribute_offset
-                    attribute_offset += n_attributes
+                if len(primitive.indices) > 0 {
+                    primitive.index_offset = len(static_indices)
+                    append(&static_indices, ..primitive.indices)
                 }
             }
         }
 
-        // Textures
-        for &texture in asset.textures {
-            append(&texture_barriers, create_texture(renderer, &texture, &srv_handle))
+        for &texture in game_asset.textures {
+            barrier := create_texture(renderer, &texture, &srv_handle)
+            append(&resource_barriers, barrier)
+        }
+
+        for &font in game_asset.fonts {
+            asset.load_font_vertices(&font, &static_positions, &static_indices)
         }
     }
-    
-    renderer.static_position_buffer->Unmap(0, nil)
-    renderer.static_attribute_buffer->Unmap(0, nil)
-    renderer.static_index_buffer->Unmap(0, nil)
 
-    renderer.command_list->ResourceBarrier(u32(len(texture_barriers)), raw_data(texture_barriers))
+    renderer.static_buffers.position = create_static_buffer(renderer, static_positions[:])
+    renderer.static_buffers.attribute = create_static_buffer(renderer, static_attributes[:])
+    renderer.static_buffers.index = create_static_buffer(renderer, static_indices[:])
+
+    append(&resource_barriers, 
+        d3d12.RESOURCE_BARRIER{
+            Type = .TRANSITION,
+            Transition = {
+                pResource = renderer.static_buffers.position,
+                StateBefore = {.COPY_DEST},
+                StateAfter = {.VERTEX_AND_CONSTANT_BUFFER},
+                Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            },
+        },
+        d3d12.RESOURCE_BARRIER{
+            Type = .TRANSITION,
+            Transition = {
+                pResource = renderer.static_buffers.attribute,
+                StateBefore = {.COPY_DEST},
+                StateAfter = {.VERTEX_AND_CONSTANT_BUFFER},
+                Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            },
+        },
+        d3d12.RESOURCE_BARRIER{
+            Type = .TRANSITION,
+            Transition = {
+                pResource = renderer.static_buffers.index,
+                StateBefore = {.COPY_DEST},
+                StateAfter = {.INDEX_BUFFER},
+                Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            },
+        },
+    )
+}
+
+    renderer.command_list->ResourceBarrier(u32(len(resource_barriers)), raw_data(resource_barriers))
     cmd_lists := []^d3d12.ICommandList{
         renderer.command_list,
     }
@@ -595,33 +630,45 @@ initialize_renderer :: proc(
     }
 
     // Dynamic vertex buffers
-    render_group.positions.capacity = 4096
-    renderer.dynamic_position_buffer = create_buffer(renderer.device, u32(render_group.positions.capacity * size_of(asset.Vertex_Position)))
+    render_group.positions.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Position)
     dynamic_positions: rawptr
-    hr = renderer.dynamic_position_buffer->Map(0, &read_range, &dynamic_positions)
-    if hr < 0 do log.fatal("Failed to map D3D12 dynamic position buffer")
+    renderer.dynamic_buffers.position, dynamic_positions = create_mapped_buffer(
+        renderer.device, 
+        u32(render_group.positions.capacity * size_of(asset.Vertex_Position))
+    )
     render_group.positions.memory = cast([^]asset.Vertex_Position)dynamic_positions
 
-    render_group.attributes.capacity = 4096
-    renderer.dynamic_attribute_buffer = create_buffer(renderer.device, u32(render_group.attributes.capacity * size_of(asset.Vertex_Attributes)))
+    render_group.attributes.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Attributes)
     dynamic_attributes: rawptr
-    hr = renderer.dynamic_attribute_buffer->Map(0, &read_range, &dynamic_attributes)
-    if hr < 0 do log.fatal("Failed to map D3D12 dynamic attributes buffer")
+    renderer.dynamic_buffers.attribute, dynamic_attributes = create_mapped_buffer(
+        renderer.device, 
+        u32(render_group.attributes.capacity * size_of(asset.Vertex_Attributes))
+    )
     render_group.attributes.memory = cast([^]asset.Vertex_Attributes)dynamic_attributes
     
-    render_group.indices.capacity = 4096
-    renderer.dynamic_index_buffer = create_buffer(renderer.device, u32(render_group.indices.capacity * size_of(u32)))
+    render_group.indices.capacity = DYNAMIC_BUFFER_SIZE / size_of(u32)
     dynamic_indices: rawptr
-    hr = renderer.dynamic_index_buffer->Map(0, &read_range, &dynamic_indices)
-    if hr < 0 do log.fatal("Failed to map D3D12 dynamic index buffer")
+    renderer.dynamic_buffers.index, dynamic_indices = create_mapped_buffer(
+        renderer.device, 
+        u32(render_group.indices.capacity * size_of(u32))
+    )
     render_group.indices.memory = cast([^]u32)dynamic_indices
 
-    render_group.text_vertices.capacity = 4096
-    renderer.text_buffer = create_buffer(renderer.device, u32(render_group.text_vertices.capacity * size_of(asset.Vertex_Text)))
+    render_group.text_vertices.capacity = DYNAMIC_BUFFER_SIZE / size_of(asset.Vertex_Text)
     dynamic_text_vertices: rawptr
-    hr = renderer.text_buffer->Map(0, &read_range, &dynamic_text_vertices)
-    if hr < 0 do log.fatal("Failed to map D3D12 dynamic text vertices buffer")
+    renderer.dynamic_buffers.text_instances, dynamic_text_vertices = create_mapped_buffer(
+        renderer.device, 
+        u32(render_group.text_vertices.capacity * size_of(asset.Vertex_Text))
+    )
     render_group.text_vertices.memory = cast([^]asset.Vertex_Text)dynamic_text_vertices
+
+    render_group.text_offsets.capacity = DYNAMIC_BUFFER_SIZE / size_of(u32)
+    dynamic_text_offsets: rawptr
+    renderer.dynamic_buffers.text_offsets, dynamic_text_offsets = create_mapped_buffer(
+        renderer.device, 
+        u32(render_group.text_offsets.capacity * size_of(u32))
+    )
+    render_group.text_offsets.memory = cast([^]u32)dynamic_text_offsets
 
     // Constant buffers
     for i in 0..<N_BACK_BUFFERS {
@@ -629,9 +676,7 @@ initialize_renderer :: proc(
             constant_buffer := &renderer.constant_buffers[i][id]
             constant_buffer.type = constant_buffer_types[id]
             size := mem.align_forward_int(size_of(constant_buffer.type), 256)
-            constant_buffer.buffer = create_buffer(renderer.device, u32(size))
-            read_range := d3d12.RANGE{0, 0}
-            constant_buffer.buffer->Map(0, &read_range, &constant_buffer.mapped_memory)
+            constant_buffer.buffer, constant_buffer.mapped_memory = create_mapped_buffer(renderer.device, u32(size))
         }
     }
 
@@ -640,7 +685,7 @@ initialize_renderer :: proc(
     heap_desc := d3d12.RESOURCE_DESC{
         Dimension = .BUFFER,
         Alignment = 0,
-        Width = mem.Megabyte,
+        Width = RING_BUFFER_SIZE,
         Height = 1,
         DepthOrArraySize = 1,
         MipLevels = 1,
@@ -679,7 +724,7 @@ initialize_renderer :: proc(
     }
 
     // Pipelines
-    create_root_signature(renderer, n_textures)
+    create_root_signature(renderer, n_srv_descriptors)
     for id in Shader_Pipeline_ID {
         initialize_pipeline(id, renderer)
     }
@@ -687,7 +732,11 @@ initialize_renderer :: proc(
     renderer.frame = 0
 }
 
-create_texture :: proc(renderer: ^Renderer_Context, texture: ^asset.Texture, srv_handle: ^d3d12.CPU_DESCRIPTOR_HANDLE) -> d3d12.RESOURCE_BARRIER {
+create_texture :: proc(
+    renderer: ^Renderer_Context, 
+    texture: ^asset.Texture, 
+    srv_handle: ^d3d12.CPU_DESCRIPTOR_HANDLE,
+) -> d3d12.RESOURCE_BARRIER {
     format: dxgi.FORMAT
     switch texture.image.depth {
         case 8:
@@ -735,33 +784,7 @@ create_texture :: proc(renderer: ^Renderer_Context, texture: ^asset.Texture, srv
     dst_pitch: u64
     renderer.device->GetCopyableFootprints(&texture_desc, 0, 1, 0, &subresource_footprint, &n_rows, &dst_pitch, &upload_buffer_size)
 
-    upload_heap_props := d3d12.HEAP_PROPERTIES{ Type = .UPLOAD, }
-    upload_desc := d3d12.RESOURCE_DESC{
-        Dimension = .BUFFER,
-        Width = upload_buffer_size,
-        Height = 1,
-        DepthOrArraySize = 1,
-        MipLevels = 1,
-        Format = .UNKNOWN,
-        SampleDesc = { Count = 1, Quality = 0, },
-        Layout = .ROW_MAJOR,
-        Flags = {},
-    }
-
-    upload_buffer: ^d3d12.IResource
-    renderer.device->CreateCommittedResource(
-        &upload_heap_props,
-        {},
-        &upload_desc,
-        d3d12.RESOURCE_STATE_GENERIC_READ,
-        nil,
-        d3d12.IResource_UUID,
-        (^rawptr)(&upload_buffer)
-    )
-
-    mapped_memory: rawptr
-    read_range := d3d12.RANGE{0, 0}
-    upload_buffer->Map(0, &read_range, &mapped_memory)
+    upload_buffer, mapped_memory := create_mapped_buffer(renderer.device, u32(upload_buffer_size))
     dst_mem := ([^]byte)(mapped_memory)
     src_mem := texture.image.pixels.buf[:]
     src_pitch := texture.image.width * texture.image.channels * texture.image.depth / 8
@@ -825,6 +848,29 @@ create_texture :: proc(renderer: ^Renderer_Context, texture: ^asset.Texture, srv
             Subresource = d3d12.RESOURCE_BARRIER_ALL_SUBRESOURCES,
         },
     }
+}
+
+create_structured_buffer :: proc(
+    renderer: ^Renderer_Context,
+    array: $T/[]$E,
+    srv_handle: ^d3d12.CPU_DESCRIPTOR_HANDLE
+) -> ^d3d12.IResource {
+    buffer := create_static_buffer(renderer, array)
+    srv_desc := d3d12.SHADER_RESOURCE_VIEW_DESC{
+        Format = .UNKNOWN,
+        ViewDimension = .BUFFER,
+        Shader4ComponentMapping = d3d12.DEFAULT_SHADER_4_COMPONENT_MAPPING,
+        Buffer = {
+            StructureByteStride = size_of(E),
+            FirstElement = 0,
+            NumElements = u32(len(array)),
+        }
+    }
+    renderer.device->CreateShaderResourceView(buffer, &srv_desc, srv_handle^)
+    renderer.srv_heap.descriptor_count += 1
+    srv_handle.ptr += uint(renderer.srv_heap.descriptor_size)
+
+    return buffer
 }
 
 handle_resize :: proc(renderer: ^Renderer_Context, render_group: ^Render_Group) {
@@ -924,6 +970,7 @@ render :: proc(memory: ^Game_Memory) {
         resolution = {f32(group.width), f32(group.height)},
         mouse = input.mouse.cursor,
         last_mouse = input.mouse.last_cursor,
+        time = memory.time,
     }
     set_constant_buffer(renderer, &global_cb)
 
@@ -947,16 +994,21 @@ render :: proc(memory: ^Game_Memory) {
     renderer.command_list->OMSetRenderTargets(1, &rtv_handle, false, &dsv_handle)
     renderer.command_list->SetGraphicsRootSignature(renderer.root_signature)
     global := renderer.constant_buffers[frame_index][.Global]
-    light := renderer.constant_buffers[frame_index][.Light]
     renderer.command_list->SetGraphicsRootConstantBufferView(0, global.buffer->GetGPUVirtualAddress())
+    light := renderer.constant_buffers[frame_index][.Light]
     renderer.command_list->SetGraphicsRootConstantBufferView(1, light.buffer->GetGPUVirtualAddress())
 
-    clear_color := [4]f32{ 0, 0, 0, 0}
+    renderer.command_list->OMSetStencilRef(1)
+
+    clear_color := [4]f32{0, 0, 0, 0}
     renderer.command_list->ClearRenderTargetView(rtv_handle, &clear_color, 0, nil)
     renderer.command_list->ClearDepthStencilView(dsv_handle, { .DEPTH, .STENCIL }, 1.0, 0, 0, nil)
 
-    for entry in group.commands {
+    for &entry in group.commands {
         pipeline := renderer.shader_pipelines[entry.pipeline]
+        renderer.command_list->SetPipelineState(pipeline)
+        topology := D3D12_get_primitive_topology(entry.topology)
+        renderer.command_list->IASetPrimitiveTopology(topology)
 
         per_draw_data := Per_Draw_Data{
             transform = linalg.transpose(entry.transform),
@@ -973,82 +1025,47 @@ render :: proc(memory: ^Game_Memory) {
         }
         per_draw_data_address := allocate_from_ring_buffer(ring_buffer, per_draw_data)
         renderer.command_list->SetGraphicsRootConstantBufferView(2, per_draw_data_address)
-        renderer.command_list->SetPipelineState(pipeline)
-        topology := D3D12_get_primitive_topology(entry.topology)
-        renderer.command_list->IASetPrimitiveTopology(topology)
 
-        n_buffers: u32 = 1
-        positions_address: d3d12.GPU_VIRTUAL_ADDRESS
-        indices_address: d3d12.GPU_VIRTUAL_ADDRESS
-        extra_address: d3d12.GPU_VIRTUAL_ADDRESS
-        extra_size: int
-        extra_stride: int
-        if entry.dynamic_buffer {
-            positions_address = renderer.dynamic_position_buffer->GetGPUVirtualAddress() + 
-                u64(entry.positions.offset * size_of(asset.Vertex_Position))
-            if entry.attributes.count > 0 {
-                n_buffers = 2
-                extra_address = renderer.dynamic_attribute_buffer->GetGPUVirtualAddress() + 
-                    u64(entry.attributes.offset * size_of(asset.Vertex_Attributes))
-                extra_size = entry.attributes.count * size_of(asset.Vertex_Attributes)
-                extra_stride = size_of(asset.Vertex_Attributes)
-            }
-            else if entry.text_vertices.count > 0 {
-                n_buffers = 2
-                extra_address = renderer.dynamic_attribute_buffer->GetGPUVirtualAddress() + 
-                    u64(entry.text_vertices.offset * size_of(asset.Vertex_Text))
-                extra_size = entry.text_vertices.count * size_of(asset.Vertex_Text)
-                extra_stride = size_of(asset.Vertex_Text)
-            }
-
-            if entry.indices.count > 0 {
-                indices_address = renderer.dynamic_index_buffer->GetGPUVirtualAddress() + 
-                    u64(entry.indices.offset * size_of(u32))
-            }
+        positions := entry.dynamic_buffer ? renderer.dynamic_buffers.position : renderer.static_buffers.position
+        attributes := entry.dynamic_buffer ? renderer.dynamic_buffers.attribute : renderer.static_buffers.attribute
+        indices := entry.dynamic_buffer ? renderer.dynamic_buffers.index : renderer.static_buffers.index
+        
+        if entry.instances.count > 0 {
+            renderer.command_list->SetGraphicsRootShaderResourceView(3, 
+                renderer.dynamic_buffers.text_instances->GetGPUVirtualAddress())
+            renderer.command_list->SetGraphicsRootShaderResourceView(4, 
+                renderer.dynamic_buffers.text_offsets->GetGPUVirtualAddress() + u64(entry.instances.offset * size_of(u32)))
         }
         else {
-            positions_address = renderer.static_position_buffer->GetGPUVirtualAddress() + 
-                u64(entry.positions.offset * size_of(asset.Vertex_Position))
-            if entry.attributes.count > 0 {
-                n_buffers = 2
-                extra_address = renderer.static_attribute_buffer->GetGPUVirtualAddress() + 
-                    u64(entry.attributes.offset * size_of(asset.Vertex_Attributes))
-                extra_size = entry.attributes.count * size_of(asset.Vertex_Attributes)
-                extra_stride = size_of(asset.Vertex_Attributes)
-            }
-
-            if entry.indices.count > 0 {
-                indices_address = renderer.static_index_buffer->GetGPUVirtualAddress() + 
-                    u64(entry.indices.offset * size_of(u32))
-            }
+            entry.instances.count = 1
         }
-        
+
         vertex_buffers := []d3d12.VERTEX_BUFFER_VIEW{
             {
-                BufferLocation = positions_address,
+                BufferLocation = positions->GetGPUVirtualAddress() + u64(entry.positions.offset * size_of(asset.Vertex_Position)),
                 SizeInBytes = u32(entry.positions.count * size_of(asset.Vertex_Position)),
                 StrideInBytes = size_of(asset.Vertex_Position),
             },
             {
-                BufferLocation = extra_address,
-                    SizeInBytes = u32(entry.attributes.count * size_of(asset.Vertex_Attributes)),
-                    StrideInBytes = size_of(asset.Vertex_Attributes),
+                BufferLocation = attributes != nil ? attributes->GetGPUVirtualAddress() + u64(entry.attributes.offset * size_of(asset.Vertex_Attributes)) : 0,
+                SizeInBytes = u32(entry.attributes.count * size_of(asset.Vertex_Attributes)),
+                StrideInBytes = size_of(asset.Vertex_Attributes),
             },
         }
         
-        renderer.command_list->IASetVertexBuffers(0, n_buffers, raw_data(vertex_buffers))
+        renderer.command_list->IASetVertexBuffers(0, entry.attributes.count > 0 ? 2 : 1, raw_data(vertex_buffers))
 
         if entry.indices.count > 0 {
             index_buffer_view := d3d12.INDEX_BUFFER_VIEW{
-                BufferLocation = indices_address,
+                BufferLocation = indices->GetGPUVirtualAddress() + u64(entry.indices.offset * size_of(u32)),
                 Format = .R32_UINT,
                 SizeInBytes = u32(entry.indices.count * size_of(u32)),
             }
             renderer.command_list->IASetIndexBuffer(&index_buffer_view)
-            renderer.command_list->DrawIndexedInstanced(u32(entry.indices.count), 1, 0, 0, 0)
+            renderer.command_list->DrawIndexedInstanced(u32(entry.indices.count), u32(entry.instances.count), 0, 0, 0)
         }
         else {
-            renderer.command_list->DrawInstanced(u32(entry.positions.count), 1, 0, 0)
+            renderer.command_list->DrawInstanced(u32(entry.positions.count), u32(entry.instances.count), 0, 0)
         }
     }
 
@@ -1110,6 +1127,7 @@ render :: proc(memory: ^Game_Memory) {
     asset.clear_vertex_buffer(&group.attributes)
     asset.clear_vertex_buffer(&group.indices)
     asset.clear_vertex_buffer(&group.text_vertices)
+    asset.clear_vertex_buffer(&group.text_offsets)
 }
 
 }

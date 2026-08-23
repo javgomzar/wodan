@@ -24,25 +24,38 @@ Glyph_Composite_Record :: struct {
 }
 
 Glyph :: struct {
-    id:            i32,
-    code:          i32,
-    left, top:     f32,
-    width, height: f32,
-    composite:     bool,
-    contours:      []Glyph_Contour,
-    children:      []Glyph_Composite_Record,
+    id:                        i32,
+    code:                      i32,
+    left, top:                 f32,
+    width, height:             f32,
+    advance:                   f32,
+    composite:                 bool,
+    contours:                  []Glyph_Contour,
+    children:                  []Glyph_Composite_Record,
+    n_positions:               int,
+    positions_offset:          int,
+    n_triangle_fan_indices:    int,
+    triangle_fan_offset:       int,
+    n_interior_bezier_indices: int,
+    interior_bezier_offset:    int,
+    n_exterior_bezier_indices: int,
+    exterior_bezier_offset:    int,
+    instances_offset:          int,
+    instances:                 [dynamic]u32,
 }
 
 Font :: struct {
-    name:              string,
-    space_advance:     f32,
-    line_jump:         f32,
-    min_x, max_x:      f32,
-    min_y, max_y:      f32,
-    units_per_em:      f32,
-    glyphs:            []Glyph,
-    code_to_index:     map[i32]i32,
-    glyph_id_to_index: map[i32]i32,
+    name:                 string,
+    space_advance:        f32,
+    line_jump:            f32,
+    min_x, max_x:         f32,
+    min_y, max_y:         f32,
+    units_per_em:         f32,
+    glyphs:               []Glyph,
+    code_to_index:        map[i32]i32,
+    glyph_id_to_index:    map[i32]i32,
+    glyphs_offset:        u64,
+    cells_offset:         u64,
 }
 
 FWORD :: distinct i16be
@@ -447,15 +460,16 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
 
         // metrics
         if glyph_id < n_hmetrics {
-            glyph.width = f32(horizontal_metrics_table[glyph_id].advance_width)
+            glyph.advance = f32(horizontal_metrics_table[glyph_id].advance_width)
             glyph.left = f32(horizontal_metrics_table[glyph_id].left_side_bearing)
         }
         else {
-            glyph.width = f32(horizontal_metrics_table[n_hmetrics-1].advance_width)
+            glyph.advance = f32(horizontal_metrics_table[n_hmetrics-1].advance_width)
             glyph.left = f32(other_left_side_bearings[glyph_id - n_hmetrics])
         }
+        glyph.width = f32(glyph_header.max_x - glyph_header.min_x)
         glyph.height = f32(glyph_header.max_y - glyph_header.min_y)
-        glyph.top = f32(glyph_header.max_y)
+        glyph.top = -f32(glyph_header.max_y)
 
         if glyph_header.n_contours == 0 {
             log.warn("Glyph", glyph_id, "has zero contours for font", result.name)
@@ -513,13 +527,13 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
             
             point_index = 0
             last_x, last_y: i16
+            repeat_counter = 0
             for end_point, contour_index in end_pts_of_contours {
                 previous_on_curve := false
                 contour := &glyph.contours[contour_index]
                 
                 points := make([dynamic]Glyph_Contour_Point, allocator)
                 defer delete(points)
-                repeat_counter: u8
                 for ;point_index <= int(end_point); point_index += 1 {
                     current_flags := flags[0]
 
@@ -548,7 +562,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                         point := Glyph_Contour_Point{
                             on_curve = true,
                             x = 0.5 * (f32(x) + f32(last_x)),
-                            y = 0.5 * (f32(y) + f32(last_y)),
+                            y = -0.5 * (f32(y) + f32(last_y)),
                         }
                         append(&points, point)
                     }
@@ -556,7 +570,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
                     point := Glyph_Contour_Point{
                         on_curve = on_curve,
                         x = f32(x),
-                        y = f32(y),
+                        y = -f32(y),
                     }
                     append(&points, point)
 
@@ -572,6 +586,7 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
 
                 contour.points = make([]Glyph_Contour_Point, len(points), context.allocator)
                 copy(contour.points, points[:])
+                glyph.n_positions += len(points)
             }
 
             continue
@@ -673,6 +688,82 @@ import_ttf :: proc(path: string, language: Language) -> (result: Font) {
     return
 }
 
-build_spatial_acceleration :: proc(font: ^Font) {
-    
+load_font_vertices :: proc(font: ^Font, positions: ^[dynamic]Vertex_Position, indices: ^[dynamic]u32) {
+    for &glyph in font.glyphs {
+        glyph.positions_offset = len(positions)
+
+        glyph_positions := make([dynamic]Vertex_Position)
+        defer delete(glyph_positions)
+        defer append(positions, ..glyph_positions[:])
+
+        glyph_triangle_fan_indices := make([dynamic]u32)
+        defer delete(glyph_triangle_fan_indices)
+
+        glyph_interior_bezier_indices := make([dynamic]u32)
+        defer delete(glyph_interior_bezier_indices)
+
+        glyph_exterior_bezier_indices := make([dynamic]u32)
+        defer delete(glyph_exterior_bezier_indices)
+
+        first_found: bool
+        first_index: u32
+
+        for contour in glyph.contours {
+            if len(contour.points) <= 2 do continue
+
+            triangle_fan_vertices := make([dynamic]u32)
+            defer delete(triangle_fan_vertices)
+
+            first_contour_point_index := len(glyph_positions)
+
+            for point, point_index_in_contour in contour.points {
+                point_index_in_glyph := first_contour_point_index + point_index_in_contour
+                append(&glyph_positions, Vertex_Position{point.x, point.y, 0})
+                if point.on_curve {
+                    if !first_found {
+                        first_index = u32(point_index_in_glyph)
+                        first_found = true
+                    }
+                    append(&triangle_fan_vertices, u32(point_index_in_glyph))
+                }
+                else {
+                    start_index := (point_index_in_contour + len(contour.points) - 1) % len(contour.points)
+                    start := contour.points[start_index]
+                    end_index := (point_index_in_contour + 1) % len(contour.points)
+                    end := contour.points[end_index]
+                    area := get_area({{start.x, start.y}, {point.x, point.y}, {end.x, end.y}})
+                    if area < 0 {
+                        append(&triangle_fan_vertices, u32(point_index_in_glyph))
+                        append(&glyph_interior_bezier_indices, u32(first_contour_point_index + start_index))
+                        append(&glyph_interior_bezier_indices, u32(point_index_in_glyph))
+                        append(&glyph_interior_bezier_indices, u32(first_contour_point_index + end_index))
+                    }
+                    else if area > 0 {
+                        append(&glyph_exterior_bezier_indices, u32(first_contour_point_index + start_index))
+                        append(&glyph_exterior_bezier_indices, u32(point_index_in_glyph))
+                        append(&glyph_exterior_bezier_indices, u32(first_contour_point_index + end_index))
+                    }
+                }
+            }
+            
+            for point, index in triangle_fan_vertices {
+                next := triangle_fan_vertices[(index + 1) % len(triangle_fan_vertices)]
+                append(&glyph_triangle_fan_indices, first_index)
+                append(&glyph_triangle_fan_indices, point)
+                append(&glyph_triangle_fan_indices, next)
+            }
+        }
+
+        glyph.n_triangle_fan_indices = len(glyph_triangle_fan_indices)
+        glyph.triangle_fan_offset = len(indices)
+        append(indices, ..glyph_triangle_fan_indices[:])
+
+        glyph.n_interior_bezier_indices = len(glyph_interior_bezier_indices)
+        glyph.interior_bezier_offset = len(indices)
+        append(indices, ..glyph_interior_bezier_indices[:])
+
+        glyph.n_exterior_bezier_indices = len(glyph_exterior_bezier_indices)
+        glyph.exterior_bezier_offset = len(indices)
+        append(indices, ..glyph_exterior_bezier_indices[:])
+    }
 }

@@ -1,0 +1,11 @@
+struct VS_OUT {
+    float4 sv_position: SV_POSITION;
+    float4 color: COLOR;
+    float2 position: POSITION;
+    float3 barycentric: SV_Barycentrics;
+};
+
+void main(VS_OUT vout) {
+    float f = 0.5 * vout.barycentric.y + vout.barycentric.x;
+    if (vout.barycentric.x > f * f) discard;
+}

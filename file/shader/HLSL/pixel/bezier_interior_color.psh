@@ -1,0 +1,17 @@
+struct VS_OUT {
+    float4 sv_position: SV_POSITION;
+    float4 color: COLOR;
+    float2 position: POSITION;
+    float3 barycentric: SV_Barycentrics;
+};
+
+float4 main(VS_OUT vout): SV_TARGET {
+    float f = 0.5 * vout.barycentric.y + vout.barycentric.x;
+    float2x2 J = float2x2(
+        ddx(f), ddx(vout.barycentric.x),
+        ddy(f), ddy(vout.barycentric.x)
+    );
+    float sd = (vout.barycentric.x - f * f) / length(mul(J, float2(- 2 * f, 1)));
+    float a = clamp(0.5 - sd, 0, 1);
+    return a * vout.color;
+}

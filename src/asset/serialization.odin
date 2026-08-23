@@ -225,7 +225,7 @@ deserialize_glyph_contour :: proc(memory: []byte) -> (result: Glyph_Contour, siz
 }
 
 get_serialized_size_glyph :: proc(glyph: Glyph) -> (size: int) {
-    size += 6 * size_of(f32) + size_of(bool)
+    size += 7 * size_of(f32) + size_of(bool)
     if glyph.composite {
         size += get_serialized_size_slice(glyph.children)
     }
@@ -257,6 +257,9 @@ serialize_glyph :: proc(memory: []byte, glyph: Glyph) -> (size: int) {
     dump_to_memory(block, glyph.height)
     block = block[size_of(glyph.height):]
     size += size_of(glyph.height)
+    dump_to_memory(block, glyph.advance)
+    block = block[size_of(glyph.advance):]
+    size += size_of(glyph.advance)
     dump_to_memory(block, glyph.composite)
     block = block[size_of(glyph.composite):]
     size += size_of(glyph.composite)
@@ -297,6 +300,9 @@ deserialize_glyph :: proc(memory: []byte) -> (result: Glyph, size: int) {
     block = block[size_of(f32):]
     size += size_of(f32)
     result.height = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.advance = extract_from_memory(block, f32)
     block = block[size_of(f32):]
     size += size_of(f32)
     result.composite = extract_from_memory(block, bool)

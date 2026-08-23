@@ -33,38 +33,64 @@ shader_target := [Shader_Type]w32.wstring {
 
 Shader_ID :: enum {
     None = 0,
+
     Vertex_Passthrough,
     Vertex_Screen,
     Vertex_Screen_Attributes,
     Vertex_World,
     Vertex_Mesh,
+    Vertex_Text,
+
     Pixel_Color,
     Pixel_Mesh,
     Pixel_Texture,
+    Pixel_Text_Cover,
+    Pixel_Bezier_Exterior_Stencil,
+    Pixel_Bezier_Interior_Stencil,
+    Pixel_Bezier_Exterior_Color,
+    Pixel_Bezier_Interior_Color,
 }
 
 get_shader_path :: proc(id: Shader_ID) -> string {
     switch id {
-        case .None:                     return ""
-        case .Vertex_Screen:            return "file/shader/HLSL/vertex/screen.vsh"
-        case .Vertex_Screen_Attributes: return "file/shader/HLSL/vertex/screen_attributes.vsh"
-        case .Vertex_World:             return "file/shader/HLSL/vertex/world.vsh"
-        case .Vertex_Passthrough:       return "file/shader/HLSL/vertex/passthrough.vsh"
-        case .Vertex_Mesh:              return "file/shader/HLSL/vertex/mesh.vsh"
-        case .Pixel_Color:              return "file/shader/HLSL/pixel/color.psh"
-        case .Pixel_Mesh:               return "file/shader/HLSL/pixel/mesh.psh"
-        case .Pixel_Texture:            return "file/shader/HLSL/pixel/texture.psh"
+        case .None:                          return ""
+
+        case .Vertex_Screen:                 return "file/shader/HLSL/vertex/screen.vsh"
+        case .Vertex_Screen_Attributes:      return "file/shader/HLSL/vertex/screen_attributes.vsh"
+        case .Vertex_World:                  return "file/shader/HLSL/vertex/world.vsh"
+        case .Vertex_Passthrough:            return "file/shader/HLSL/vertex/passthrough.vsh"
+        case .Vertex_Mesh:                   return "file/shader/HLSL/vertex/mesh.vsh"
+        case .Vertex_Text:                   return "file/shader/HLSL/vertex/text.vsh"
+
+        case .Pixel_Color:                   return "file/shader/HLSL/pixel/color.psh"
+        case .Pixel_Mesh:                    return "file/shader/HLSL/pixel/mesh.psh"
+        case .Pixel_Texture:                 return "file/shader/HLSL/pixel/texture.psh"
+        case .Pixel_Text_Cover:              return "file/shader/HLSL/pixel/cover.psh"
+        case .Pixel_Bezier_Exterior_Stencil: return "file/shader/HLSL/pixel/bezier_exterior_stencil.psh"
+        case .Pixel_Bezier_Interior_Stencil: return "file/shader/HLSL/pixel/bezier_interior_stencil.psh"
+        case .Pixel_Bezier_Exterior_Color:   return "file/shader/HLSL/pixel/bezier_exterior_color.psh"
+        case .Pixel_Bezier_Interior_Color:   return "file/shader/HLSL/pixel/bezier_interior_color.psh"
     }
     return ""
 }
 
 Shader_Pipeline_ID :: enum {
+// 2D
     Screen_Line,
     Screen_Triangle,
     Screen_Texture,
+    Winding_Number,
+    Text_Bezier_Exterior_Stencil,
+    Text_Bezier_Interior_Stencil,
+    Text_Bezier_Exterior_Color,
+    Text_Bezier_Interior_Color,
+    Text_Stencil,
+    Text_Cover,
+    Text_Clean_Stencil,
+
+// 3D
     Grid,
     Mesh,
-    Text,
 }
 
 Shader_Pipeline_Entry :: struct {
@@ -94,6 +120,12 @@ shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
             .Pixel = .Pixel_Texture,
         }
     },
+    .Winding_Number = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+        }
+    },
     .Grid = {
         primitive = .LINE,
         stage = #partial {
@@ -108,13 +140,53 @@ shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
             .Pixel = .Pixel_Mesh,
         },
     },
-    .Text = {
+    .Text_Bezier_Exterior_Stencil = {
         primitive = .TRIANGLE,
         stage = #partial {
-            .Vertex = .Vertex_Screen,
-            .Pixel = .Pixel_Color, 
+            .Vertex = .Vertex_Text,
+            .Pixel = .Pixel_Bezier_Exterior_Stencil,
         },
     },
+    .Text_Bezier_Interior_Stencil = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+            .Pixel = .Pixel_Bezier_Interior_Stencil,
+        },
+    },
+    .Text_Bezier_Exterior_Color = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+            .Pixel = .Pixel_Bezier_Exterior_Color,
+        },
+    },
+    .Text_Bezier_Interior_Color = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+            .Pixel = .Pixel_Bezier_Interior_Color,
+        },
+    },
+    .Text_Stencil = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+        },
+    },
+    .Text_Cover = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+            .Pixel = .Pixel_Text_Cover,
+        },
+    },
+    .Text_Clean_Stencil = {
+        primitive = .TRIANGLE,
+        stage = #partial {
+            .Vertex = .Vertex_Text,
+        }
+    }
 }
 
 Constant_Buffer :: struct {
@@ -372,7 +444,7 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
     input_slot: u32 = name == "POSITION" ? 0 : 1
     offset: u32
     switch name {
-        case "POSITION", "NORMAL":
+        case "POSITION", "NORMAL", "SV_VERTEXID", "SV_INSTANCEID":
             offset = 0
         case "TEXCOORD":
             offset = 12
@@ -392,11 +464,11 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
     }
 }
 
-create_root_signature :: proc(renderer: ^Renderer_Context, n_textures: u32) {
+create_root_signature :: proc(renderer: ^Renderer_Context, n_srv_descriptors: u32) {
     srv_range := []d3d12.DESCRIPTOR_RANGE{
         {
             RangeType = .SRV,
-            NumDescriptors = n_textures,
+            NumDescriptors = n_srv_descriptors,
             BaseShaderRegister = 0,
             RegisterSpace = 0,
             OffsetInDescriptorsFromTableStart = d3d12.DESCRIPTOR_RANGE_OFFSET_APPEND,
@@ -444,6 +516,24 @@ create_root_signature :: proc(renderer: ^Renderer_Context, n_textures: u32) {
             },
             ShaderVisibility = .ALL,
         },
+        {
+            // Glyph instances
+            ParameterType = .SRV,
+            Descriptor = {
+                RegisterSpace = 0,
+                ShaderRegister = 0,
+            },
+            ShaderVisibility = .ALL,
+        },
+        {
+            // Glyph offsets
+            ParameterType = .SRV,
+            Descriptor = {
+                RegisterSpace = 0,
+                ShaderRegister = 1,
+            },
+            ShaderVisibility = .ALL,
+        },
     }
 
     root_signature_desc := d3d12.VERSIONED_ROOT_SIGNATURE_DESC{
@@ -483,15 +573,128 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
     vertex_shader := &renderer.shaders[entry.stage[.Vertex]]
     vertex_shader.reflection->GetDesc(&shader_desc)
     
+    input_layout: d3d12.INPUT_LAYOUT_DESC
     input_elements: [8]d3d12.INPUT_ELEMENT_DESC
     parameter: d3d12.SIGNATURE_PARAMETER_DESC
     for i in 0..<shader_desc.InputParameters {
         vertex_shader.reflection->GetInputParameterDesc(i, &parameter)
         input_elements[i] = get_input_element(parameter)
     }
-    input_layout := d3d12.INPUT_LAYOUT_DESC{
+    input_layout = d3d12.INPUT_LAYOUT_DESC{
         NumElements = shader_desc.InputParameters,
         pInputElementDescs = raw_data(input_elements[:]),
+    }
+
+    depth_stencil_desc: d3d12.DEPTH_STENCIL_DESC = {
+        DepthEnable = w32.TRUE,
+        StencilEnable = w32.FALSE,
+        DepthWriteMask = .ALL,
+        DepthFunc = .LESS,
+    }
+
+    #partial switch id {
+        case .Winding_Number:
+            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.StencilEnable = w32.TRUE
+            depth_stencil_desc.StencilReadMask = 0xff
+            depth_stencil_desc.StencilWriteMask = 0xff
+            depth_stencil_desc.FrontFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .INCR,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+            depth_stencil_desc.BackFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .DECR,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+        case .Text_Bezier_Exterior_Stencil, .Text_Bezier_Interior_Stencil:
+            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.StencilEnable = w32.TRUE
+            depth_stencil_desc.StencilReadMask = 0xff
+            depth_stencil_desc.StencilWriteMask = 0xff
+            depth_stencil_desc.FrontFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .ZERO,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+            depth_stencil_desc.BackFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .ZERO,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+        case .Text_Bezier_Exterior_Color, .Text_Bezier_Interior_Color:
+            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.StencilEnable = w32.TRUE
+            depth_stencil_desc.StencilReadMask = 0xff
+            depth_stencil_desc.StencilWriteMask = 0xff
+            depth_stencil_desc.FrontFace = {
+                StencilFunc = .EQUAL,
+                StencilPassOp = .KEEP,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+            depth_stencil_desc.BackFace = {
+                StencilFunc = .EQUAL,
+                StencilPassOp = .KEEP,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+        case .Text_Stencil:
+            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.StencilEnable = w32.TRUE
+            depth_stencil_desc.StencilReadMask = 0xff
+            depth_stencil_desc.StencilWriteMask = 0xff
+            depth_stencil_desc.FrontFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .INCR,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+            depth_stencil_desc.BackFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .INCR,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .KEEP,
+            }
+        case .Text_Cover: 
+            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.StencilEnable = w32.TRUE
+            depth_stencil_desc.StencilReadMask = 0xff
+            depth_stencil_desc.StencilWriteMask = 0xff
+            depth_stencil_desc.FrontFace = {
+                StencilFunc = .EQUAL,
+                StencilPassOp = .KEEP,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .ZERO,
+            }
+            depth_stencil_desc.BackFace = {
+                StencilFunc = .EQUAL,
+                StencilPassOp = .KEEP,
+                StencilFailOp = .KEEP,
+                StencilDepthFailOp = .ZERO,
+            }
+        case .Text_Clean_Stencil: 
+            depth_stencil_desc.DepthEnable = w32.FALSE
+            depth_stencil_desc.StencilEnable = w32.TRUE
+            depth_stencil_desc.StencilReadMask = 0xff
+            depth_stencil_desc.StencilWriteMask = 0xff
+            depth_stencil_desc.FrontFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .ZERO,
+                StencilFailOp = .ZERO,
+                StencilDepthFailOp = .ZERO,
+            }
+            depth_stencil_desc.BackFace = {
+                StencilFunc = .ALWAYS,
+                StencilPassOp = .ZERO,
+                StencilFailOp = .ZERO,
+                StencilDepthFailOp = .ZERO,
+            }
     }
 
     pixel_shader := &renderer.shaders[entry.stage[.Pixel]]
@@ -511,12 +714,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
             AlphaToCoverageEnable = w32.FALSE,
             IndependentBlendEnable = w32.FALSE,
         },
-        DepthStencilState = {
-            DepthEnable = w32.TRUE,
-            StencilEnable = w32.FALSE,
-            DepthWriteMask = .ALL,
-            DepthFunc = .LESS,
-        },
+        DepthStencilState = depth_stencil_desc,
         RasterizerState = {
             FillMode = .SOLID,
             CullMode = .NONE,
@@ -546,6 +744,11 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
         BlendOpAlpha = .ADD,
         LogicOp = .NOOP,
         RenderTargetWriteMask = 0xf,
+    }
+
+    #partial switch id {
+        case .Winding_Number, .Text_Stencil, .Text_Bezier_Exterior_Stencil, .Text_Bezier_Interior_Stencil, .Text_Clean_Stencil:
+            pipeline_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = 0
     }
 
     hr := renderer.device->CreateGraphicsPipelineState(&pipeline_desc, d3d12.IPipelineState_UUID, (^rawptr)(pipeline))

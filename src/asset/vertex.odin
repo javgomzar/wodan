@@ -11,10 +11,11 @@ Vertex_Attributes :: struct #align(16) {
     color:   [4]f32,
 }
 
-Vertex_Text :: struct #align(16) {
-    size:       f32,
-    char_index: i32,
-    color:      [4]f32,
+Vertex_Text :: struct {
+    pen:   [2]f32,
+    depth: f32,
+    size:  f32,
+    color: [4]f32,
 }
 
 Vertex_Buffer :: struct($T: typeid) {

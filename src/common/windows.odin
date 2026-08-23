@@ -63,8 +63,8 @@ log_level_color :: proc(level: log.Level) -> w32.WORD {
         case .Debug:    return w32.FOREGROUND_GREEN | w32.FOREGROUND_BLUE
         case .Info:     return w32.FOREGROUND_GREEN | w32.FOREGROUND_BLUE
         case .Warning:  return w32.FOREGROUND_RED | w32.FOREGROUND_GREEN
-        case .Error:    return w32.FOREGROUND_RED
-        case .Fatal:    return w32.FOREGROUND_RED | w32.FOREGROUND_INTENSITY
+        case .Error:    return w32.FOREGROUND_RED | w32.FOREGROUND_INTENSITY
+        case .Fatal:    return w32.FOREGROUND_RED 
     }
     return 0
 }
