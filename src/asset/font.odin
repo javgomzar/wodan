@@ -775,3 +775,68 @@ load_font_vertices :: proc(font: ^Font, positions: ^[dynamic]Vertex_Position, in
         append(indices, ..glyph_exterior_bezier_indices[:])
     }
 }
+
+DPI :: 96.0
+
+get_text_width :: proc(font: ^Font, text: string, points: f32) -> (result: f32) {
+    size := points * (DPI / 72.0) / font.units_per_em
+
+    line_width: f32
+    for char in text {
+        if char == ' ' {
+            line_width += size * font.space_advance
+            continue
+        }
+
+        if char == '\n' {
+            if line_width > result do result = line_width
+            line_width = 0
+            continue
+        }
+
+        line_width += size * get_glyph(font, i32(char)).advance
+    }
+
+    if line_width > result do result = line_width
+    return
+}
+
+get_text_rect :: proc(font: ^Font, text: string, pen_x: f32, pen_y: f32, points: f32) -> (result: Rect) {
+    size := points * (DPI / 72.0) / font.units_per_em
+
+    result.left = pen_x
+    result.top = max(f32)
+
+    line_width: f32
+    nth_line: int
+    line_min_y: f32
+    for char in text {
+        if char == ' ' {
+            line_width += size * font.space_advance
+            continue
+        }
+
+        if char == '\n' {
+            if line_width > result.width do result.width = line_width
+            line_width = 0
+            line_min_y = 0
+            nth_line += 1
+
+            continue
+        }
+
+        glyph := get_glyph(font, i32(char))
+        line_width += size * glyph.advance
+        line_min_y = min(line_min_y, size * glyph.min_y)
+        
+        if nth_line == 0 {
+            result.top = min(result.top, pen_y - size * glyph.max_y)
+        }
+    }
+
+    if line_width > result.width do result.width = line_width
+
+    result.height = pen_y + size * (f32(nth_line) * font.line_jump - line_min_y) - result.top
+
+    return
+}
