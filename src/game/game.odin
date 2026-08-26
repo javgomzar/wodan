@@ -9,8 +9,7 @@ import "../asset"
 @(export)
 initialize_game_state :: proc(memory: ^common.Game_Memory) {
     common.set_up_timing(&memory.time_records)
-    timer := common.start_timer(.Asset_Loading)
-    defer common.end_timer(timer)
+    start := common.get_wall_clock()
     
     asset_manager := &memory.asset_manager
     asset.initialize_manager(asset_manager)
@@ -38,13 +37,18 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
     asset_manager.catalog.debug_font = asset.get_font_by_name(asset_manager, "DejaVuSansMono")
 
     common.initialize_renderer(&memory.asset_manager, &memory.renderer, &memory.render_group)
+    common.initialize_ui_context(memory)
     memory.initialized = true
+
+    end := common.get_wall_clock()
+    log.info("Loaded assets in", 1000.0*common.get_seconds_elapsed(start, end), "milliseconds")
 }
 
 @(export)
 reload_game_state :: proc(memory: ^common.Game_Memory) {
     common.set_up_timing(&memory.time_records)
     common.initialize_shader_compiler(&memory.renderer.shader_compiler)
+    common.initialize_ui_context(memory)
 }
 
 @(export)
@@ -70,8 +74,6 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
                 scale = {10, 10, 10},
                 color = {1, 1, 1, 0.4},
             )
-
-            common.push_debug_overlay(render_group, memory.time, int(1.0 / memory.delta_time))
         }
 
         if input.keyboard.key[.Control].is_down && input.keyboard.key[.T].just_pressed {
@@ -95,10 +97,7 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
         }
     }
 
-    if input.keyboard.key[.F1].just_pressed {
-        memory.debug = !memory.debug
-        if memory.debug do log.debug("Debug mode on")
-    }
+    common.update_ui(memory)
 
     cube := asset.get_mesh_by_name(system_asset, "Mesh")
     material := &system_asset.materials[1]
@@ -107,7 +106,4 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
 
     common.send_render_text_commands(render_group)
     common.render(memory)
-
-    common.print_timers()
-    common.clear_time_records()
 }

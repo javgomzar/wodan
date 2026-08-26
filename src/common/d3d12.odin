@@ -919,6 +919,9 @@ handle_resize :: proc(renderer: ^Renderer_Context, render_group: ^Render_Group) 
 }
 
 render :: proc(memory: ^Game_Memory) {
+    timer := start_timer(.Rendering)
+    defer end_timer(timer)
+
     renderer := &memory.renderer
     group := &memory.render_group
     input := &memory.input

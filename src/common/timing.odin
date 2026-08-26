@@ -1,10 +1,8 @@
 package common
 
-import "core:log"
-
 
 Time_Record_ID :: enum {
-    Asset_Loading,
+    Rendering,
 }
 
 Time_Record :: struct {
@@ -12,7 +10,7 @@ Time_Record :: struct {
     procedure: string,
     line:      i32,
     count:     i32,
-    time:      f32,
+    time_ms:   f32,
 }
 
 Timer :: struct {
@@ -49,22 +47,12 @@ start_timer :: proc(id: Time_Record_ID, location := #caller_location) -> Timer {
 
 end_timer :: proc(timer: Timer) {
     end := get_wall_clock()
-    timer.record.time += get_seconds_elapsed(timer.start, end)
-}
-
-print_timers :: proc() {
-    for record, id in time_records {
-        if record.count > 0 {
-            ms := 1000.0 * record.time
-            log.debug("ID: ", id, ", `", record.procedure, "` at ", record.file,":", record.line,
-            " took ", ms, " ms in total, called ", record.count, " times. Average: ", ms / f32(record.count), "\n", sep="")
-        }
-    }
+    timer.record.time_ms += 1000.0 * get_seconds_elapsed(timer.start, end)
 }
 
 clear_time_records :: proc() {
     for &record, id in time_records {
-        record.time = 0
+        record.time_ms = 0
         record.count = 0
     }
 }

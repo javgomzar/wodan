@@ -108,3 +108,7 @@ reset_input :: proc(input: ^Input_Context) {
     reset_button_state(&input.controller.pad.down)
     input.controller.some_down = false
 }
+
+cursor_is_in_rect :: proc(cursor: [2]f32, rect_left: f32, rect_top: f32, rect_width: f32, rect_height: f32) -> bool {
+    return rect_left <= cursor.x && cursor.x <= rect_left + rect_width && rect_top <= cursor.y && cursor.y <= rect_top + rect_height
+}
