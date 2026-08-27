@@ -3,8 +3,9 @@ package common
 import "core:fmt"
 import "core:log"
 import "core:container/pool"
-import "base:runtime"
 import "core:reflect"
+import "core:strings"
+import "base:runtime"
 import "../asset"
 
 
@@ -110,9 +111,9 @@ create_ui_element :: proc(
     element, ok := ui_context.elements[name]
     if !ok {
         element = pool.get(&ui_context.pool)
-        ui_context.elements[name] = element
+        element.name = strings.clone(name)
+        ui_context.elements[element.name] = element
     }
-    element.name = name
     element.last_frame = ui_context.frame
     element.sizes = sizes
     element.alignments = alignments
@@ -210,6 +211,12 @@ create_ui_element :: proc(
     }
 
     return element
+}
+
+delete_ui_element :: proc(element: ^UI_Element) {
+    key, value := delete_key(&ui_context.elements, element.name)
+    delete(element.name)
+    pool.put(&ui_context.pool, element)
 }
 
 UI_Text :: proc(
@@ -423,8 +430,7 @@ update_ui :: proc(memory: ^Game_Memory) {
     // Prune stale elements
     for name, element in ui_context.elements {
         if element.last_frame < ui_context.frame {
-            pool.put(&ui_context.pool, element)
-            delete_key(&ui_context.elements, name)
+            delete_ui_element(element)
         }
     }
 
