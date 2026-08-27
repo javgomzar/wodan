@@ -72,15 +72,68 @@ get_view_matrix :: proc(angle: f32, pitch: f32, distance: f32, position: [3]f32)
     return result
 }
 
-get_projection_matrix :: proc(Width: f32, Height: f32) -> matrix[4, 4]f32 {
-    s_x: f32 = 1.0
-    s_y: f32 = Width / Height
-    s_z: f32 = 1.0
+get_projection_matrix :: proc(width: f32, height: f32) -> matrix[4, 4]f32 {
+    a: f32 = width / height
     
+    return {
+        1.0, 0.0, 0.0, 0.0,
+        0.0,   a, 0.0, 0.0,
+        0.0, 0.0, 1.0, 1.0,
+        0.0, 0.0,-1.0, 0.0,
+    }
+}
+
+/*
+    `y_fov`: Vertical field of view in radians,
+    `n`: distance to the near clipping plane
+*/
+get_infinite_perspective_projection_matrix :: proc(
+    width: f32, height: f32, y_fov: f32, n: f32
+) -> matrix[4, 4]f32 {
+    a := width / height
+    t := 1.0 / math.tan(0.5*y_fov)
+    
+    return {
+        t / a, 0.0, 0.0, 0.0,
+          0.0,   t, 0.0, 0.0,
+          0.0, 0.0, 1.0, 2*n,
+          0.0, 0.0,-1.0, 0.0,
+    }
+}
+
+/*
+    `y_fov`: Vertical field of view in radians,
+    `f`: distance to the far clipping plane,
+    `n`: distance to the near clipping plane
+*/
+get_finite_perspective_projection_matrix :: proc(
+    width: f32, height: f32, y_fov: f32, f: f32, n: f32
+) -> matrix[4, 4]f32 {
+    a := width / height
+    t := 1.0 / math.tan(0.5*y_fov)
+    u := (f + n) / (n - f)
+    v := 2.0 * f * n / (n - f)
+    
+    return {
+        t / a, 0.0, 0.0, 0.0,
+          0.0,   t, 0.0, 0.0,
+          0.0, 0.0,   u,   v,
+          0.0, 0.0,-1.0, 0.0,
+    }
+}
+
+get_orthographic_projection_matrix :: proc(
+    width: f32, height: f32, f: f32, n: f32
+) -> matrix[4, 4]f32 {
+    s_x := 2.0 / width
+    s_y := 2.0 / height
+    u := 2.0 / (n - f)
+    v := (f + n) / (n - f)
+
     return {
         s_x, 0.0, 0.0, 0.0,
         0.0, s_y, 0.0, 0.0,
-        0.0, 0.0, 1.0, s_z,
+        0.0, 0.0,   u,  -v,
         0.0, 0.0,-1.0, 0.0,
     }
 }
