@@ -2,6 +2,7 @@ package common
 
 import "core:fmt"
 import "core:log"
+import "core:mem"
 import "core:container/pool"
 import "core:reflect"
 import "core:strings"
@@ -415,9 +416,12 @@ update_ui :: proc(memory: ^Game_Memory) {
         if memory.debug do log.debug("Debug mode on")
     }
     if memory.debug {
+        memory_used, ok := get_process_memory()
+        memory_used = memory_used / mem.Megabyte
         UI_Column("debug_info",
             UI_Text("debug_fps", "FPS: %d", int(1.0 / f32(memory.delta_time)), alignments = {.Min, .Center}),
             UI_Text("debug_time", "Time: %.3f", memory.time, alignments = {.Min, .Center}),
+            UI_Text("debug_memory", "Memory: %d MB", memory_used, alignments = {.Min, .Center}),
             alignments = { .Min, .Min },
         )
 

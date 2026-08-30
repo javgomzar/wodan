@@ -1,6 +1,7 @@
 package common
 
 import w32 "core:sys/windows"
+import "core:dynlib"
 import "core:fmt"
 import "core:time"
 import "core:os"
@@ -108,6 +109,40 @@ game_log :: proc(data: rawptr, level: log.Level, text: string, options: log.Opti
     if level == .Fatal {
         os.exit(1)
     }
+}
+
+get_process_memory :: proc() -> (u64, bool) {
+    GetProcessMemoryInfo_Proc :: proc "stdcall" (
+        w32.HANDLE,
+        rawptr,
+        u32,
+    ) -> w32.BOOL
+
+    counters: [9]u64
+    counters[0] = 72
+
+    kernel32, ok_k32 := dynlib.load_library("kernel32.dll")
+    if !ok_k32 {
+        return 0, false
+    }
+    defer dynlib.unload_library(kernel32)
+
+    address, ok := dynlib.symbol_address(
+        kernel32,
+        "K32GetProcessMemoryInfo",
+    )
+    if !ok {
+        return 0, false
+    }
+
+    get_memory_info := transmute(GetProcessMemoryInfo_Proc)address
+    result := get_memory_info(w32.GetCurrentProcess(), rawptr(&counters), 72)
+
+    if !result {
+        return 0, false
+    }
+
+    return counters[2], true
 }
 
 process_messages :: proc(window: w32.HWND, input: ^common.Input_Context) {
