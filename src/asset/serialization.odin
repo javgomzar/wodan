@@ -329,6 +329,7 @@ deserialize_glyph :: proc(memory: []byte) -> (result: Glyph, size: int) {
             result.contours[i], contour_size = deserialize_glyph_contour(block)
             size += contour_size
             block = block[contour_size:]
+            result.n_positions += len(result.contours[i].points)
         }
     }
     expected_size := get_serialized_size_glyph(result)

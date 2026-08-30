@@ -206,8 +206,7 @@ write :: proc(asset: ^Asset) {
 
     write_error := os.write_entire_file(asset.file_info.fullpath, block)
     if write_error != nil do log.fatal("Failed to write asset file", asset.file_info.fullpath)
-
-    log.info("Asset", asset.file_info.fullpath, "was successfully written")
+    else                  do log.info("Asset", asset.file_info.fullpath, "was successfully written")
 }
 
 load :: proc(asset: ^Asset) {
@@ -231,6 +230,11 @@ load :: proc(asset: ^Asset) {
         size: int
         font, size = deserialize_font(block)
         block = block[size:]
+
+        for &glyph, index in font.glyphs {
+            font.code_to_index[glyph.code] = i32(index)
+            font.glyph_id_to_index[glyph.id] = i32(index)
+        }
     }
 
     for &mesh in asset.meshes {
@@ -303,8 +307,6 @@ release :: proc(asset: ^Asset) {
     for texture in asset.textures do img.destroy(texture.image)
     if len(asset.textures) > 0 do delete(asset.textures)
 
-    os.file_info_delete(asset.file_info, context.allocator)
-
     asset.released = true
 }
 
@@ -343,6 +345,6 @@ initialize_manager :: proc(manager: ^Manager) {
     // empty asset for id 0
     add_asset(manager, "")
 
-    system_asset := add_asset(manager, "file/asset/system/system.ass", force_process = true)
+    system_asset := add_asset(manager, "file/asset/system/system.ass")
     manager.system_asset_id = system_asset.id
 }

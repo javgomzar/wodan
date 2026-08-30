@@ -55,8 +55,6 @@ Font :: struct {
     glyphs:               []Glyph,
     code_to_index:        map[i32]i32,
     glyph_id_to_index:    map[i32]i32,
-    glyphs_offset:        u64,
-    cells_offset:         u64,
 }
 
 get_glyph :: proc(font: ^Font, code: i32) -> ^Glyph {
