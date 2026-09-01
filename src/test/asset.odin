@@ -55,49 +55,9 @@ test_asset_loading :: proc(t: ^testing.T, manager: ^asset.Manager, path: string,
     loaded_asset.file_info, error = os.stat(path, context.allocator)
     asset.load(&loaded_asset)
 
-    testing.expect(t, len(test_asset.fonts) == len(loaded_asset.fonts))
     testing.expect(t, len(test_asset.meshes) == len(loaded_asset.meshes))
     testing.expect(t, len(test_asset.materials) == len(loaded_asset.materials))
     testing.expect(t, len(test_asset.textures) == len(loaded_asset.textures))
-
-    for font, index in test_asset.fonts {
-        loaded_font := loaded_asset.fonts[index]
-        testing.expect(t, font.name == loaded_font.name)
-        testing.expect(t, font.space_advance == loaded_font.space_advance)
-        testing.expect(t, font.line_jump == loaded_font.line_jump)
-        testing.expect(t, font.min_x == loaded_font.min_x && font.max_x == loaded_font.max_x)
-        testing.expect(t, font.min_y == loaded_font.min_y && font.max_y == loaded_font.max_y)
-        testing.expect(t, font.units_per_em == loaded_font.units_per_em)
-
-        for glyph, g_index in font.glyphs {
-            loaded_glyph := loaded_font.glyphs[g_index]
-            testing.expect(t, glyph.id == loaded_glyph.id)
-            testing.expect(t, glyph.code == loaded_glyph.code)
-            testing.expect(t, glyph.min_x == loaded_glyph.min_x)
-            testing.expect(t, glyph.max_x == loaded_glyph.max_x)
-            testing.expect(t, glyph.min_y == loaded_glyph.min_y)
-            testing.expect(t, glyph.max_y == loaded_glyph.max_y)
-            testing.expect(t, glyph.composite == loaded_glyph.composite)
-            if glyph.composite {
-                for child, c_index in glyph.children {
-                    loaded_child := loaded_glyph.children[c_index]
-                    testing.expect(t, child.child_id == loaded_child.child_id)
-                    testing.expect(t, child.x == loaded_child.x && child.y == loaded_child.y)
-                    testing.expect(t, child.transform == loaded_child.transform)
-                }
-            }
-            else {
-                for contour, c_index in glyph.contours {
-                    loaded_contour := loaded_glyph.contours[c_index]
-                    for point, p_index in contour.points {
-                        loaded_point := loaded_contour.points[p_index]
-                        testing.expect(t, point.on_curve == loaded_point.on_curve)
-                        testing.expect(t, point.x == loaded_point.x && point.y == loaded_point.y)
-                    }
-                }
-            }
-        }
-    }
 
     for mesh, index in test_asset.meshes {
         loaded_mesh := loaded_asset.meshes[index]
@@ -140,19 +100,6 @@ test_asset_loading_box :: proc(t: ^testing.T) {
     test_asset_loading(t, &manager, "file/asset/test/box.ass", {
         "D:/TestAssets/glTF-Sample-Assets-main/Models/Box/glTF-Binary/Box.glb",
         "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTextured/glTF-Binary/BoxTextured.glb",
-    })
-
-    asset.release_assets(&manager)
-}
-
-@(test)
-test_asset_loading_fonts :: proc(t: ^testing.T) {
-    manager: asset.Manager
-    asset.initialize_manager(&manager)
-
-    test_asset_loading(t, &manager, "file/asset/test/fonts.ass", {
-        "D:/Code/Odin/wodan/file/asset/system/DejaVuSans.ttf",
-        "D:/Code/Odin/wodan/file/asset/system/DejaVuSansMono.ttf",
     })
 
     asset.release_assets(&manager)

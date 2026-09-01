@@ -16,12 +16,10 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
 
     // System assets
     system_asset := &asset_manager.assets[asset_manager.system_asset_id]
-    asset.add_file(system_asset, "file/asset/system/DejaVuSans.ttf")
-    asset.add_file(system_asset, "file/asset/system/DejaVuSansMono.ttf")
-    asset.add_file(system_asset, "file/asset/system/BlackChancery.ttf")
     asset.add_file(system_asset, "file/asset/system/grid.glb")
     asset.add_file(system_asset, "file/asset/system/rgb_triangle.glb")
-    asset.add_file(system_asset, "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTexturedNonPowerOfTwo/glTF-Binary/BoxTexturedNonPowerOfTwo.glb")
+    asset.add_file(system_asset, "file/asset/system/body_pro.glb")
+    //asset.add_file(system_asset, "file/asset/animation/Standard_Walking.glb")
     
     // Add assets here
 
@@ -33,8 +31,6 @@ initialize_game_state :: proc(memory: ^common.Game_Memory) {
         }
         else do asset.load(&game_asset)
     }
-
-    asset_manager.catalog.debug_font = asset.get_font_by_name(asset_manager, "DejaVuSansMono")
 
     common.initialize_renderer(&memory.asset_manager, &memory.renderer, &memory.render_group)
     common.initialize_ui_context(memory)
@@ -91,18 +87,16 @@ update_game_state :: proc(memory: ^common.Game_Memory) {
             common.push_text(
                 render_group, 
                 test_string, 
-                100, 300, 100 - 30*math.cos(memory.time), 
-                font = asset.get_font_by_name(asset_manager, "BlackChancery")
+                100, 300, 100 - 30*math.cos(memory.time),
+                font = asset.get_font(asset_manager, "BlackChancery")
             )
         }
     }
 
     common.update_ui(memory)
 
-    cube := asset.get_mesh_by_name(system_asset, "Mesh")
-    material := &system_asset.materials[1]
-    texture := &system_asset.textures[0]
-    common.push_mesh(render_group, cube, .Mesh, material = material, texture = texture, scale = {1, -1, 1})
+    // body := asset.get_mesh_by_name(system_asset, "Mesh")
+    // common.push_mesh(render_group, body, .Mesh, scale = {1, 1, -1})
 
     common.send_render_text_commands(render_group)
     common.render(memory)

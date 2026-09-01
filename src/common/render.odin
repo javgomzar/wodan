@@ -436,76 +436,74 @@ push_text :: proc(
 }
 
 send_render_text_commands :: proc(group: ^Render_Group) {
-    for &game_asset in group.asset_manager.assets[1:] {
-        for &font in game_asset.fonts {
-            for &glyph in font.glyphs {
-                if len(glyph.instances) > 0 {
-                    glyph.instances_offset = group.text_offsets.count
+    for name, &font in group.asset_manager.fonts {
+        for &glyph in font.glyphs {
+            if len(glyph.instances) > 0 {
+                glyph.instances_offset = group.text_offsets.count
 
-                    instances := asset.push_vertices(&group.text_offsets, len(glyph.instances))
-                    copy(instances.memory, glyph.instances[:])
+                instances := asset.push_vertices(&group.text_offsets, len(glyph.instances))
+                copy(instances.memory, glyph.instances[:])
 
-                    positions := asset.static_vertices(glyph.n_positions, glyph.positions_offset, asset.Vertex_Position)
+                positions := asset.static_vertices(glyph.n_positions, glyph.positions_offset, asset.Vertex_Position)
 
-                    winding_number_pass := add_entry(group, .Triangle, .Winding_Number, false)
-                    winding_number_pass.positions = positions
-                    winding_number_pass.instances = instances
-                    winding_number_pass.indices = asset.static_vertices(glyph.n_triangle_fan_indices, glyph.triangle_fan_offset, u32)
+                winding_number_pass := add_entry(group, .Triangle, .Winding_Number, false)
+                winding_number_pass.positions = positions
+                winding_number_pass.instances = instances
+                winding_number_pass.indices = asset.static_vertices(glyph.n_triangle_fan_indices, glyph.triangle_fan_offset, u32)
 
-                    entry_cover := add_entry(group, .Triangle_Strip, .Text_Cover, true)
-                    entry_cover.positions = asset.push_vertices(&group.positions, 4)
-                    entry_cover.instances = instances
-                    entry_cover_vertices := &entry_cover.positions.memory
+                entry_cover := add_entry(group, .Triangle_Strip, .Text_Cover, true)
+                entry_cover.positions = asset.push_vertices(&group.positions, 4)
+                entry_cover.instances = instances
+                entry_cover_vertices := &entry_cover.positions.memory
 
-                    glyph_width := glyph.max_x - glyph.min_x
+                glyph_width := glyph.max_x - glyph.min_x
 
-                    entry_cover_vertices[0] = {glyph.min_x, glyph.max_y, 0}
-                    entry_cover_vertices[1] = {glyph.max_x, glyph.max_y, 0}
-                    entry_cover_vertices[2] = {glyph.min_x, glyph.min_y, 0}
-                    entry_cover_vertices[3] = {glyph.max_x, glyph.min_y, 0}
+                entry_cover_vertices[0] = {glyph.min_x, glyph.max_y, 0}
+                entry_cover_vertices[1] = {glyph.max_x, glyph.max_y, 0}
+                entry_cover_vertices[2] = {glyph.min_x, glyph.min_y, 0}
+                entry_cover_vertices[3] = {glyph.max_x, glyph.min_y, 0}
 
-                    if glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices > 0 {
-                        bezier_triangles_pass := add_entry(group, .Triangle, .Text_Stencil, false)
-                        bezier_triangles_pass.positions = positions
-                        bezier_triangles_pass.instances = instances
-                        bezier_triangles_pass.indices = asset.static_vertices(
-                            glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices, glyph.interior_bezier_offset, u32)
+                if glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices > 0 {
+                    bezier_triangles_pass := add_entry(group, .Triangle, .Text_Stencil, false)
+                    bezier_triangles_pass.positions = positions
+                    bezier_triangles_pass.instances = instances
+                    bezier_triangles_pass.indices = asset.static_vertices(
+                        glyph.n_interior_bezier_indices + glyph.n_exterior_bezier_indices, glyph.interior_bezier_offset, u32)
 
-                        if glyph.n_interior_bezier_indices > 0 {
-                            bezier_interior_stencil_pass := add_entry(group, .Triangle, .Text_Bezier_Interior_Stencil, false)
-                            bezier_interior_stencil_pass.positions = positions
-                            bezier_interior_stencil_pass.instances = instances
-                            bezier_interior_stencil_pass.indices = asset.static_vertices(glyph.n_interior_bezier_indices, glyph.interior_bezier_offset, u32)
-                        }
-
-                        if glyph.n_exterior_bezier_indices > 0 {
-                            bezier_exterior_stencil_pass := add_entry(group, .Triangle, .Text_Bezier_Exterior_Stencil, false)
-                            bezier_exterior_stencil_pass.positions = positions
-                            bezier_exterior_stencil_pass.instances = instances
-                            bezier_exterior_stencil_pass.indices = asset.static_vertices(glyph.n_exterior_bezier_indices, glyph.exterior_bezier_offset, u32)
-                        }
-
-                        if glyph.n_interior_bezier_indices > 0 {
-                            bezier_interior_color_pass := add_entry(group, .Triangle, .Text_Bezier_Interior_Color, false)
-                            bezier_interior_color_pass.positions = positions
-                            bezier_interior_color_pass.instances = instances
-                            bezier_interior_color_pass.indices = asset.static_vertices(glyph.n_interior_bezier_indices, glyph.interior_bezier_offset, u32)
-                        }
-
-                        if glyph.n_exterior_bezier_indices > 0 {
-                            bezier_exterior_color_pass := add_entry(group, .Triangle, .Text_Bezier_Exterior_Color, false)
-                            bezier_exterior_color_pass.positions = positions
-                            bezier_exterior_color_pass.instances = instances
-                            bezier_exterior_color_pass.indices = asset.static_vertices(glyph.n_exterior_bezier_indices, glyph.exterior_bezier_offset, u32)
-                        }
+                    if glyph.n_interior_bezier_indices > 0 {
+                        bezier_interior_stencil_pass := add_entry(group, .Triangle, .Text_Bezier_Interior_Stencil, false)
+                        bezier_interior_stencil_pass.positions = positions
+                        bezier_interior_stencil_pass.instances = instances
+                        bezier_interior_stencil_pass.indices = asset.static_vertices(glyph.n_interior_bezier_indices, glyph.interior_bezier_offset, u32)
                     }
 
-                    entry_stencil_clean := add_entry(group, .Triangle_Strip, .Text_Clean_Stencil, true)
-                    entry_stencil_clean.positions = entry_cover.positions
-                    entry_stencil_clean.instances = instances
+                    if glyph.n_exterior_bezier_indices > 0 {
+                        bezier_exterior_stencil_pass := add_entry(group, .Triangle, .Text_Bezier_Exterior_Stencil, false)
+                        bezier_exterior_stencil_pass.positions = positions
+                        bezier_exterior_stencil_pass.instances = instances
+                        bezier_exterior_stencil_pass.indices = asset.static_vertices(glyph.n_exterior_bezier_indices, glyph.exterior_bezier_offset, u32)
+                    }
 
-                    clear(&glyph.instances)
+                    if glyph.n_interior_bezier_indices > 0 {
+                        bezier_interior_color_pass := add_entry(group, .Triangle, .Text_Bezier_Interior_Color, false)
+                        bezier_interior_color_pass.positions = positions
+                        bezier_interior_color_pass.instances = instances
+                        bezier_interior_color_pass.indices = asset.static_vertices(glyph.n_interior_bezier_indices, glyph.interior_bezier_offset, u32)
+                    }
+
+                    if glyph.n_exterior_bezier_indices > 0 {
+                        bezier_exterior_color_pass := add_entry(group, .Triangle, .Text_Bezier_Exterior_Color, false)
+                        bezier_exterior_color_pass.positions = positions
+                        bezier_exterior_color_pass.instances = instances
+                        bezier_exterior_color_pass.indices = asset.static_vertices(glyph.n_exterior_bezier_indices, glyph.exterior_bezier_offset, u32)
+                    }
                 }
+
+                entry_stencil_clean := add_entry(group, .Triangle_Strip, .Text_Clean_Stencil, true)
+                entry_stencil_clean.positions = entry_cover.positions
+                entry_stencil_clean.instances = instances
+
+                clear(&glyph.instances)
             }
         }
     }

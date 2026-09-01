@@ -75,15 +75,15 @@ UI_Element :: struct {
 }
 
 UI_Context :: struct {
-    frame:   u64,
-    input:   ^Input_Context,
-    catalog: asset.Catalog,
-    pool:    pool.Pool(UI_Element),
+    frame:         u64,
+    input:         ^Input_Context,
+    asset_manager: ^asset.Manager,
+    pool:          pool.Pool(UI_Element),
     
-    root:    ^UI_Element,
-    last:    ^UI_Element,
+    root:          ^UI_Element,
+    last:          ^UI_Element,
 
-    elements: map[string]^UI_Element,
+    elements:      map[string]^UI_Element,
 }
 
 @(private="file")
@@ -94,7 +94,7 @@ initialize_ui_context :: proc(memory: ^Game_Memory) {
     if error != nil do log.fatal("Failed to initialize UI element pool")
 
     ui_context.input = &memory.input
-    ui_context.catalog = memory.asset_manager.catalog
+    ui_context.asset_manager = &memory.asset_manager
 }
 
 create_ui_element :: proc(
@@ -104,7 +104,7 @@ create_ui_element :: proc(
     alignments: [2]UI_Alignment = {.Center, .Center},
     pad:        [2]f32 = {10, 10},
     text:       string = "",
-    font:       ^asset.Font = ui_context.catalog.debug_font,
+    font:       string = "DejaVuSansMono",
     points:     f32 = 16.0,
     color:      [4]f32 = {1, 1, 1, 1},
     flags:      UI_Flags = {},
@@ -127,12 +127,12 @@ create_ui_element :: proc(
     ui_context.last = element
 
     if len(text) > 0 {
-        element.font = font
+        element.font = asset.get_font(ui_context.asset_manager, font)
         element.text = text
         element.points = points
 
         if sizes.x.type == .Text || sizes.y.type == .Text {
-            text_rect := asset.get_text_rect(font, text, 0, 0, points)
+            text_rect := asset.get_text_rect(element.font, text, 0, 0, points)
 
             if sizes.x.type == .Text {
                 element.sizes.x.value = text_rect.width
@@ -221,14 +221,14 @@ delete_ui_element :: proc(element: ^UI_Element) {
 }
 
 UI_Text :: proc(
-    name: string,
-    text: string,
-    fmt_vars: ..any,
+    name:       string,
+    text:       string,
+    fmt_vars:   ..any,
     alignments: [2]UI_Alignment = {.Center, .Center},
-    font: ^asset.Font = ui_context.catalog.debug_font,
-    points: f32 = 16.0, 
-    color: [4]f32 = {1, 1, 1, 1},
-    flags: UI_Flags = {.Draw_Text},
+    font:       string = "DejaVuSansMono",
+    points:     f32 = 16.0, 
+    color:      [4]f32 = {1, 1, 1, 1},
+    flags:      UI_Flags = {.Draw_Text},
 ) -> ^UI_Element
 {
     element := create_ui_element(

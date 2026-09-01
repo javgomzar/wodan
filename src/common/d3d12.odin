@@ -2,6 +2,7 @@ package common
 
 import "core:mem"
 import "core:log"
+import "core:math"
 import "core:math/linalg"
 import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
@@ -564,14 +565,17 @@ initialize_renderer :: proc(
             for &primitive in mesh.primitives {
                 primitive.position_offset = len(static_positions)
                 append(&static_positions, ..primitive.positions)
+                delete(primitive.positions)
 
                 if len(primitive.attributes) > 0 {
                     primitive.attribute_offset = len(static_attributes)
                     append(&static_attributes, ..primitive.attributes)
+                    delete(primitive.attributes)
                 }
                 if len(primitive.indices) > 0 {
                     primitive.index_offset = len(static_indices)
                     append(&static_indices, ..primitive.indices)
+                    delete(primitive.indices)
                 }
             }
         }
@@ -580,10 +584,10 @@ initialize_renderer :: proc(
             barrier := create_texture(renderer, &texture, &srv_handle)
             append(&resource_barriers, barrier)
         }
-
-        for &font in game_asset.fonts {
-            asset.load_font_vertices(&font, &static_positions, &static_indices)
-        }
+    }
+    
+    for name, &font in asset_manager.fonts {
+        asset.load_font_vertices(&font, &static_positions, &static_indices)
     }
 
     renderer.static_buffers.position = create_static_buffer(renderer, static_positions[:])

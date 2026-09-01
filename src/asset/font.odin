@@ -2,6 +2,7 @@ package asset
 
 import "core:os"
 import "core:log"
+import "core:fmt"
 import "core:math"
 import "core:slice"
 import "core:strings"
@@ -55,6 +56,53 @@ Font :: struct {
     glyphs:               []Glyph,
     code_to_index:        map[i32]i32,
     glyph_id_to_index:    map[i32]i32,
+}
+
+fonts_path :: "file/asset/font"
+
+add_font :: proc(manager: ^Manager, name: string) {
+    if name in manager.fonts {
+        log.warn("Font `", name, "` already exists in asset manager. Skipping load.", sep="")
+        return
+    }
+
+    font: Font
+    ttf_file := fmt.tprintf("%s/%s.ttf", fonts_path, name)
+    if os.exists(ttf_file) {
+        data, ok := os.read_entire_file(ttf_file, context.allocator)
+        defer delete(data)
+
+        font = import_ttf(ttf_file, manager.language)
+    }
+    else {
+        log.error("Font `", name, "` wasn't found. Skipping load.", sep="")
+        return
+    }
+
+    for &glyph, index in font.glyphs {
+        font.code_to_index[glyph.code] = i32(index)
+        font.glyph_id_to_index[glyph.id] = i32(index)
+    }
+
+    manager.fonts[name] = font
+}
+
+release_font :: proc(manager: ^Manager, name: string) {
+    if name not_in manager.fonts {
+        log.error("Bad font release. Font", name, "doesn't exist.")
+        return
+    }
+    font := &manager.fonts[name]
+    delete(font.name)
+    for glyph in font.glyphs {
+        for contour in glyph.contours {
+            delete(contour.points)
+        }
+        delete(glyph.contours)
+    }
+    delete(font.glyphs)
+    delete(font.code_to_index)
+    delete(font.glyph_id_to_index)
 }
 
 get_glyph :: proc(font: ^Font, code: i32) -> ^Glyph {

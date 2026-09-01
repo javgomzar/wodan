@@ -15,7 +15,6 @@ Import_File_Format :: enum {
     GLB,
     JPEG,
     PNG,
-    TTF,
     WAV,
 }
 
@@ -26,10 +25,15 @@ Import_File :: struct {
 
 File_Header :: struct {
     magic_number:   u32,
-    font_count:     u32,
     mesh_count:     u32,
     material_count: u32,
     texture_count:  u32,
+}
+
+read_file_header :: proc(memory: []byte) -> (result: File_Header, ok: bool) {
+    header := cast(^File_Header)raw_data(memory)
+    ok = header.magic_number == 0xffaaaacc
+    return
 }
 
 Asset :: struct {
@@ -37,7 +41,6 @@ Asset :: struct {
     language:     Language,
     file_info:    os.File_Info,
     import_files: [dynamic]Import_File,
-    fonts:        []Font,
     meshes:       []Mesh,
     materials:    []Material,
     textures:     []Texture,
@@ -46,15 +49,11 @@ Asset :: struct {
     released:     bool,
 }
 
-Catalog :: struct {
-    debug_font: ^Font,
-}
-
 Manager :: struct {
     next_asset_id:    ID,
     system_asset_id:  ID,
     language:         Language,
-    catalog:          Catalog,
+    fonts:            map[string]Font,
     assets:           [dynamic]Asset,
 }
 
@@ -95,7 +94,6 @@ add_file :: proc(asset: ^Asset, path: string) {
         case "jpeg": import_file.format = .JPEG
         case "png":  import_file.format = .PNG
         case "wav":  import_file.format = .WAV
-        case "ttf":  import_file.format = .TTF
         case:
             log.fatal("Invalid format '.", ext, "'", sep = "")
     }
@@ -104,7 +102,6 @@ add_file :: proc(asset: ^Asset, path: string) {
 }
 
 Load_Context :: struct {
-    fonts:     [dynamic]Font,
     meshes:    [dynamic]Mesh,
     materials: [dynamic]Material,
     textures:  [dynamic]Texture,
@@ -112,7 +109,6 @@ Load_Context :: struct {
 
 import_asset_files :: proc(asset: ^Asset) {
     load_context: Load_Context
-    defer delete(load_context.fonts)
     defer delete(load_context.meshes)
     defer delete(load_context.materials)
     defer delete(load_context.textures)
@@ -127,18 +123,12 @@ import_asset_files :: proc(asset: ^Asset) {
             case .JPEG:
                 image, error := jpeg.load_from_file(file.info.fullpath)
                 append(&load_context.textures, Texture{ image = image, })
-            case .TTF:
-                font := import_ttf(file.info.fullpath, asset.language)
-                append(&load_context.fonts, font)
             case .WAV:
                 log.fatal("Asset file loading with extension", file.format, "hasn't been implemented yet")
             case:
                 log.fatal("Invalid asset file extension '.", file.format, "'", sep = "")
         }
     }
-
-    asset.fonts = make([]Font, len(load_context.fonts))
-    copy(asset.fonts, load_context.fonts[:])
 
     asset.meshes = make([]Mesh, len(load_context.meshes))
     copy(asset.meshes, load_context.meshes[:])
@@ -152,10 +142,6 @@ import_asset_files :: proc(asset: ^Asset) {
 
 write :: proc(asset: ^Asset) {
     total_size := size_of(File_Header)
-
-    for font in asset.fonts {
-        total_size += get_serialized_size_font(font)
-    }
 
     for mesh in asset.meshes {
         total_size += get_serialized_size_mesh(mesh)
@@ -180,14 +166,9 @@ write :: proc(asset: ^Asset) {
     header := new(File_Header, allocator)
     header^ = {
         magic_number = 0xffaaaacc,
-        font_count = u32(len(asset.fonts)),
         mesh_count = u32(len(asset.meshes)),
         material_count = u32(len(asset.materials)),
         texture_count = u32(len(asset.textures)),
-    }
-
-    for font in asset.fonts {
-        serialize_font(allocator, font)
     }
 
     for mesh in asset.meshes {
@@ -214,28 +195,20 @@ load :: proc(asset: ^Asset) {
     data, error := os.read_entire_file(path, context.allocator)
     defer delete(data)
     if error != nil {
-        log.fatal("Failed to read asset file", path)
+        log.error("Failed to read asset file", path)
+        return
     }
 
-    header := cast(^File_Header)raw_data(data)
-    assert(header.magic_number == 0xffaaaacc)
+    header, ok := read_file_header(data)
+    if !ok {
+        log.error("Asset file at ", path, " is corrupt. Skipping load.")
+        return
+    }
     block := data[size_of(File_Header):]
 
-    asset.fonts = make([]Font, header.font_count)
     asset.meshes = make([]Mesh, header.mesh_count)
     asset.materials = make([]Material, header.material_count)
     asset.textures = make([]Texture, header.texture_count)
-
-    for &font in asset.fonts {
-        size: int
-        font, size = deserialize_font(block)
-        block = block[size:]
-
-        for &glyph, index in font.glyphs {
-            font.code_to_index[glyph.code] = i32(index)
-            font.glyph_id_to_index[glyph.id] = i32(index)
-        }
-    }
 
     for &mesh in asset.meshes {
         size: int
@@ -269,21 +242,6 @@ release :: proc(asset: ^Asset) {
     // Import files
     for import_file in asset.import_files do os.file_info_delete(import_file.info, context.allocator)
     if len(asset.import_files) > 0 do delete(asset.import_files)
-
-    // Fonts
-    for font in asset.fonts {
-        delete(font.name)
-        for glyph in font.glyphs {
-            for contour in glyph.contours {
-                delete(contour.points)
-            }
-            delete(glyph.contours)
-        }
-        delete(font.glyphs)
-        delete(font.code_to_index)
-        delete(font.glyph_id_to_index)
-    }
-    if len(asset.fonts) > 0 do delete(asset.fonts)
 
     // Meshes
     for mesh in asset.meshes {
@@ -328,15 +286,12 @@ get_mesh_by_name :: proc(asset: ^Asset, name: string) -> ^Mesh {
     return result
 }
 
-get_font_by_name :: proc(manager: ^Manager, name: string) -> ^Font {
-    for asset in manager.assets[1:] {
-        for &font in asset.fonts {
-            if font.name == name {
-                return &font
-            }
-        }
+get_font :: proc(manager: ^Manager, name: string) -> ^Font {
+    if name not_in manager.fonts {
+        log.warn("Failed to find", name, "font. Using default font instead")
+        return &manager.fonts["DejaVuSansMono"]
     }
-    return nil
+    return &manager.fonts[name]
 }
 
 initialize_manager :: proc(manager: ^Manager) {
@@ -345,6 +300,11 @@ initialize_manager :: proc(manager: ^Manager) {
     // empty asset for id 0
     add_asset(manager, "")
 
-    system_asset := add_asset(manager, "file/asset/system/system.ass")
+    system_asset := add_asset(manager, "file/asset/system/system.ass", force_process = true)
+
+    add_font(manager, "DejaVuSansMono")
+    add_font(manager, "DejaVuSans")
+    add_font(manager, "BlackChancery")
+
     manager.system_asset_id = system_asset.id
 }
