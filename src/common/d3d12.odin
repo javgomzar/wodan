@@ -2,7 +2,6 @@ package common
 
 import "core:mem"
 import "core:log"
-import "core:math"
 import "core:math/linalg"
 import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
@@ -197,6 +196,7 @@ Renderer_Context :: struct {
         text_offset_memory:     rawptr,
     },
     root_signature:             ^d3d12.IRootSignature,
+    textures:                   map[asset.ID]u32,
     shader_compiler:            DXC_Compiler,
     shaders:                    [Shader_ID]DXC_Shader,
     shader_pipelines:           [Shader_Pipeline_ID]^d3d12.IPipelineState,
@@ -485,10 +485,7 @@ initialize_renderer :: proc(
     create_render_target_views(renderer)
 
     // Shader resource views
-    n_textures: u32 = 1
-    for asset in asset_manager.assets {
-        n_textures += u32(len(asset.textures))
-    }
+    n_textures: u32 = 1 + u32(len(asset_manager.items.texture))
 
     n_srv_descriptors := n_textures
 
@@ -560,30 +557,28 @@ initialize_renderer :: proc(
     defer delete(static_indices)
 
     // Asset related vertex buffers: meshes and fonts
-    for &game_asset in asset_manager.assets[1:] {
-        for &mesh in game_asset.meshes {
-            for &primitive in mesh.primitives {
-                primitive.position_offset = len(static_positions)
-                append(&static_positions, ..primitive.positions)
-                delete(primitive.positions)
+    for id, mesh in asset_manager.items.mesh {
+        for &primitive in mesh.primitives {
+            primitive.position_offset = len(static_positions)
+            append(&static_positions, ..primitive.positions)
+            delete(primitive.positions)
 
-                if len(primitive.attributes) > 0 {
-                    primitive.attribute_offset = len(static_attributes)
-                    append(&static_attributes, ..primitive.attributes)
-                    delete(primitive.attributes)
-                }
-                if len(primitive.indices) > 0 {
-                    primitive.index_offset = len(static_indices)
-                    append(&static_indices, ..primitive.indices)
-                    delete(primitive.indices)
-                }
+            if len(primitive.attributes) > 0 {
+                primitive.attribute_offset = len(static_attributes)
+                append(&static_attributes, ..primitive.attributes)
+                delete(primitive.attributes)
+            }
+            if len(primitive.indices) > 0 {
+                primitive.index_offset = len(static_indices)
+                append(&static_indices, ..primitive.indices)
+                delete(primitive.indices)
             }
         }
+    }
 
-        for &texture in game_asset.textures {
-            barrier := create_texture(renderer, &texture, &srv_handle)
-            append(&resource_barriers, barrier)
-        }
+    for id, texture in asset_manager.items.texture {
+        barrier := create_texture(renderer, texture, &srv_handle)
+        append(&resource_barriers, barrier)
     }
     
     for name, &font in asset_manager.fonts {
@@ -842,7 +837,7 @@ create_texture :: proc(
         },
     }
     renderer.device->CreateShaderResourceView(texture_buffer, &srv_desc, srv_handle^)
-    texture.gpu_index = renderer.srv_heap.descriptor_count
+    renderer.textures[texture.id] = u32(renderer.srv_heap.descriptor_count)
     srv_handle.ptr += uint(renderer.srv_heap.descriptor_size)
     renderer.srv_heap.descriptor_count += 1
 
@@ -1023,15 +1018,18 @@ render :: proc(memory: ^Game_Memory) {
         per_draw_data := Per_Draw_Data{
             transform = linalg.transpose(entry.transform),
             normal = linalg.matrix4_from_matrix3(linalg.inverse(linalg.matrix3_from_matrix4(entry.transform))),
-            material_color = entry.color,
+            material_color = entry.material.base_color,
+            metallic = entry.material.metallic,
+            roughness = entry.material.roughness,
         }
-        if entry.texture != nil {
-            per_draw_data.color_texture_index = u32(entry.texture.gpu_index)
+        if entry.material.texture.color != 0 {
+            per_draw_data.color_texture_index = renderer.textures[entry.material.texture.color]
         }
-        if entry.material != nil {
-            per_draw_data.material_color = entry.material.base_color * entry.color
-            per_draw_data.metallic = entry.material.metallic
-            per_draw_data.roughness = entry.material.roughness
+        if entry.material.texture.normal != 0 {
+            per_draw_data.normal_texture_index = renderer.textures[entry.material.texture.normal]
+        }
+        if entry.material.texture.pbr != 0 {
+            per_draw_data.pbr_texture_index = renderer.textures[entry.material.texture.pbr]
         }
         per_draw_data_address := allocate_from_ring_buffer(ring_buffer, per_draw_data)
         renderer.command_list->SetGraphicsRootConstantBufferView(2, per_draw_data_address)

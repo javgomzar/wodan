@@ -255,7 +255,7 @@ Per_Draw_Data :: struct #align(256) {
     roughness:            f32,
     color_texture_index:  u32,
     normal_texture_index: u32,
-    text_texture_index:   u32,
+    pbr_texture_index:   u32,
 }
 
 DXC_Shader :: struct {

@@ -84,7 +84,7 @@ add_font :: proc(manager: ^Manager, name: string) {
         font.glyph_id_to_index[glyph.id] = i32(index)
     }
 
-    manager.fonts[name] = font
+    manager.fonts[strings.clone(name)] = font
 }
 
 release_font :: proc(manager: ^Manager, name: string) {
@@ -92,13 +92,15 @@ release_font :: proc(manager: ^Manager, name: string) {
         log.error("Bad font release. Font", name, "doesn't exist.")
         return
     }
-    font := &manager.fonts[name]
+    key, font := delete_key(&manager.fonts, name)
+    delete(key)
     delete(font.name)
     for glyph in font.glyphs {
         for contour in glyph.contours {
             delete(contour.points)
         }
         delete(glyph.contours)
+        delete(glyph.instances)
     }
     delete(font.glyphs)
     delete(font.code_to_index)
@@ -884,5 +886,210 @@ get_text_rect :: proc(font: ^Font, text: string, pen_x: f32, pen_y: f32, points:
 
     result.height = pen_y + size * (f32(nth_line) * font.line_jump - line_min_y) - result.top
 
+    return
+}
+
+get_serialized_size_glyph_contour :: proc(contour: Glyph_Contour) -> int {
+    return get_serialized_size_slice(contour.points)
+}
+
+serialize_glyph_contour :: proc(memory: []byte, contour: Glyph_Contour) -> int {
+    return serialize_slice(memory, contour.points)
+}
+
+deserialize_glyph_contour :: proc(memory: []byte) -> (result: Glyph_Contour, size: int) {
+    result.points, size = deserialize_slice(memory, []Glyph_Contour_Point)
+    return 
+}
+
+get_serialized_size_glyph :: proc(glyph: Glyph) -> (size: int) {
+    size += 8 * size_of(f32) + size_of(bool)
+    if glyph.composite {
+        size += get_serialized_size_slice(glyph.children)
+    }
+    else {
+        size += size_of(u32) // contour count
+        for contour in glyph.contours {
+            size += get_serialized_size_glyph_contour(contour)
+        }
+    }
+    return
+}
+
+serialize_glyph :: proc(memory: []byte, glyph: Glyph) -> (size: int) {
+    dump_to_memory(memory, glyph.id)
+    block := memory[size_of(glyph.id):]
+    size += size_of(glyph.id)
+    dump_to_memory(block, glyph.code)
+    block = block[size_of(glyph.code):]
+    size += size_of(glyph.code)
+    dump_to_memory(block, glyph.min_x)
+    block = block[size_of(glyph.min_x):]
+    size += size_of(glyph.min_x)
+    dump_to_memory(block, glyph.max_x)
+    block = block[size_of(glyph.max_x):]
+    size += size_of(glyph.max_x)
+    dump_to_memory(block, glyph.min_y)
+    block = block[size_of(glyph.min_y):]
+    size += size_of(glyph.min_y)
+    dump_to_memory(block, glyph.max_y)
+    block = block[size_of(glyph.max_y):]
+    size += size_of(glyph.max_y)
+    dump_to_memory(block, glyph.advance)
+    block = block[size_of(glyph.advance):]
+    size += size_of(glyph.advance)
+    dump_to_memory(block, glyph.left_side_bearing)
+    block = block[size_of(glyph.left_side_bearing):]
+    size += size_of(glyph.left_side_bearing)
+    dump_to_memory(block, glyph.composite)
+    block = block[size_of(glyph.composite):]
+    size += size_of(glyph.composite)
+    if glyph.composite {
+        slice_size := serialize_slice(block, glyph.children)
+        block = block[slice_size:]
+        size += slice_size
+    }
+    else {
+        dump_to_memory(block, u32(len(glyph.contours)))
+        block = block[size_of(u32):]
+        size += size_of(u32)
+        for contour in glyph.contours {
+            contour_size := serialize_glyph_contour(block, contour)
+            block = block[contour_size:]
+            size += contour_size
+        }
+    }
+    expected_size := get_serialized_size_glyph(glyph)
+    assert(size == expected_size)
+    return
+}
+
+deserialize_glyph :: proc(memory: []byte) -> (result: Glyph, size: int) {
+    result.id = extract_from_memory(memory, i32)
+    block := memory[size_of(i32):]
+    size += size_of(i32)
+    result.code = extract_from_memory(block, i32)
+    block = block[size_of(i32):]
+    size += size_of(i32)
+    result.min_x = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.max_x = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.min_y = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.max_y = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.advance = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.left_side_bearing = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.composite = extract_from_memory(block, bool)
+    block = block[size_of(bool):]
+    size += size_of(bool)
+    if result.composite {
+        children_size: int
+        result.children, children_size = deserialize_slice(block, []Glyph_Composite_Record)
+        size += get_serialized_size_slice(result.children)
+    }
+    else {
+        n_contours := extract_from_memory(block, u32)
+        block = block[size_of(u32):]
+        size += size_of(u32)
+        result.contours = make([]Glyph_Contour, n_contours)
+        for i in 0..<n_contours {
+            contour_size: int
+            result.contours[i], contour_size = deserialize_glyph_contour(block)
+            size += contour_size
+            block = block[contour_size:]
+            result.n_positions += len(result.contours[i].points)
+        }
+    }
+    expected_size := get_serialized_size_glyph(result)
+    assert(size == expected_size)
+    return
+}
+
+get_serialized_size_font :: proc(font: Font) -> (size: int) {
+    size += get_serialized_size_string(font.name)
+    size += 2 * size_of(f32) // space advance and line jump
+    size += 4 * size_of(f32) // min/max x, y
+    size += size_of(f32)     // units per EM
+    size += size_of(u32)     // glyph count
+    for glyph in font.glyphs {
+        size += get_serialized_size_glyph(glyph)
+    }
+    return
+}
+
+serialize_font :: proc(memory: []byte, font: Font) {
+    name_size := serialize_string(memory, font.name)
+    block := memory[name_size:]
+    dump_to_memory(block, font.space_advance)
+    block = block[size_of(f32):]
+    dump_to_memory(block, font.line_jump)
+    block = block[size_of(f32):]
+    dump_to_memory(block, font.min_x)
+    block = block[size_of(f32):]
+    dump_to_memory(block, font.max_x)
+    block = block[size_of(f32):]
+    dump_to_memory(block, font.min_y)
+    block = block[size_of(f32):]
+    dump_to_memory(block, font.max_y)
+    block = block[size_of(f32):]
+    dump_to_memory(block, font.units_per_em)
+    block = block[size_of(f32):]
+
+    dump_to_memory(block, u32(len(font.glyphs)))
+    block = block[size_of(u32):]
+    for glyph in font.glyphs {
+        glyph_size := serialize_glyph(block, glyph)
+        block = block[glyph_size:]
+    }
+}
+
+deserialize_font :: proc(memory: []byte) -> (result: Font, size: int) {
+    name_size: int
+    result.name, name_size = deserialize_string(memory)
+    block := memory[name_size:]
+    size += name_size
+
+    result.space_advance = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.line_jump = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.min_x = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.max_x = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.min_y = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.max_y = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+    result.units_per_em = extract_from_memory(block, f32)
+    block = block[size_of(f32):]
+    size += size_of(f32)
+
+    n_glyphs := extract_from_memory(block, u32)
+    block = block[size_of(u32):]
+    size += size_of(u32)
+    result.glyphs = make([]Glyph, n_glyphs)
+    for &glyph in result.glyphs {
+        glyph_size: int
+        glyph, glyph_size = deserialize_glyph(block)
+        block = block[glyph_size:]
+        size += glyph_size
+    }
     return
 }

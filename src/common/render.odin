@@ -156,9 +156,7 @@ Render_Entry :: struct {
     indices:          asset.Vertex_Buffer_Entry(u32),
     instances:        asset.Vertex_Buffer_Entry(u32),
     transform:        matrix[4, 4]f32,
-    color:            [4]f32,
-    material:         ^asset.Material,
-    texture:          ^asset.Texture,
+    material:         asset.Material,
     dynamic_buffer:   bool,
 }
 
@@ -204,9 +202,7 @@ add_entry :: proc(
     dynamic_buffer: bool,
     key:            Sort_Key = 0,
     transform:      matrix[4, 4]f32 = 1,
-    material:       ^asset.Material = nil,
-    texture:        ^asset.Texture = nil,
-    color:          [4]f32 = {1, 1, 1, 1},
+    material:       asset.Material = asset.default_material,
 ) -> ^Render_Entry {
     entry := Render_Entry{
         topology = topology,
@@ -214,9 +210,7 @@ add_entry :: proc(
         pipeline = pipeline,
         transform = transform,
         material = material,
-        texture = texture,
         dynamic_buffer = dynamic_buffer,
-        color = color,
     }
     
     append(&group.commands, entry)
@@ -232,7 +226,7 @@ push_segment :: proc(group: ^Render_Group, start: [2]f32, end: [2]f32, color: [4
         .Line,
         .Screen_Line,
         dynamic_buffer = true,
-        color = color,
+        material = asset.get_default_material(color),
     )
 
     entry.positions = asset.push_vertices(&group.positions, 2)
@@ -245,16 +239,15 @@ push_rect :: proc(
     group: ^Render_Group,
     left: f32, top: f32,
     width: f32, height: f32,
-    texture: ^asset.Texture = nil, 
+    texture: asset.ID = 0,
     color: [4]f32 = {1, 1, 1, 1}
 ) {
-    pipeline: Shader_Pipeline_ID = texture != nil ? .Screen_Texture : .Screen_Triangle
+    pipeline: Shader_Pipeline_ID = texture != 0 ? .Screen_Texture : .Screen_Triangle
     entry := add_entry(group,
         topology = .Triangle_Strip,
         pipeline = pipeline,
         dynamic_buffer = true,
-        texture = texture,
-        color = color,
+        material = asset.get_default_material(color, texture),
     )
 
     entry.positions = asset.push_vertices(&group.positions, 4)
@@ -282,7 +275,7 @@ push_rect_outline :: proc(
         topology = .Line_Strip,
         pipeline = .Screen_Line,
         dynamic_buffer = true,
-        color = color,
+        material = asset.get_default_material(color),
     )
 
     entry.positions = asset.push_vertices(&group.positions, 5)
@@ -305,7 +298,7 @@ push_triangle :: proc(
         topology = .Triangle,
         pipeline = .Screen_Triangle,
         dynamic_buffer = true,
-        color = color,
+        material = asset.get_default_material(color),
     )
 
     entry.positions = asset.push_vertices(&group.positions, 3)
@@ -321,7 +314,7 @@ push_triangle_fan :: proc(
     vertices: [][2]f32,
     color: [4]f32 = {1, 1, 1, 1},
 ) {
-    entry := add_entry(group, .Triangle, pipeline, true, color = color)
+    entry := add_entry(group, .Triangle, pipeline, true, material = asset.get_default_material(color))
 
     entry.positions = asset.push_vertices(&group.positions, len(vertices))
     positions := entry.positions.memory
@@ -361,25 +354,32 @@ push_circle :: proc(
 
 push_mesh :: proc(
     group:       ^Render_Group,
-    mesh:        ^asset.Mesh,
+    mesh_id:     asset.ID,
     pipeline:    Shader_Pipeline_ID,
     color:       [4]f32 = {1, 1, 1, 1},
-    material:    ^asset.Material = nil,
-    texture:     ^asset.Texture = nil,
     translation: linalg.Vector3f32 = 0,
     rotation:    linalg.Quaternionf32 = 1,
     scale:       linalg.Vector3f32 = 1,
     outline:     bool = false,
 ) {
+    mesh := asset.get_mesh(group.asset_manager, mesh_id)
+    if mesh == nil do log.fatal("Failed to find mesh with ID", mesh_id)
     for primitive in mesh.primitives {
+        material: asset.Material
+        primitive_material := asset.get_material(group.asset_manager, primitive.material)
+        if primitive_material == nil {
+            material = asset.get_default_material()
+        }
+        else {
+            material = primitive_material^
+        }
+        material.base_color *= color
         entry := add_entry(group,
             topology = primitive.topology,
             pipeline = pipeline,
             dynamic_buffer = false,
             transform = linalg.matrix4_from_trs_f32(translation, rotation, scale),
-            color = color,
             material = material,
-            texture = texture,
         )
 
         entry.positions = asset.static_vertices(len(primitive.positions), primitive.position_offset, asset.Vertex_Position)

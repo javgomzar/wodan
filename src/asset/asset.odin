@@ -1,27 +1,16 @@
 package asset
 
 import "core:os"
-import "core:mem"
 import "core:log"
 import "core:time"
+import "core:slice"
+import "core:container/pool"
 import img "core:image"
 import "core:image/png"
 import "core:image/jpeg"
 
 
 ID :: distinct u32
-
-Import_File_Format :: enum {
-    GLB,
-    JPEG,
-    PNG,
-    WAV,
-}
-
-Import_File :: struct {
-    info:       os.File_Info,
-    format:     Import_File_Format,
-}
 
 File_Header :: struct {
     magic_number:   u32,
@@ -33,165 +22,238 @@ File_Header :: struct {
 read_file_header :: proc(memory: []byte) -> (result: File_Header, ok: bool) {
     header := cast(^File_Header)raw_data(memory)
     ok = header.magic_number == 0xffaaaacc
+    result = header^
     return
 }
 
 Asset :: struct {
-    id:           ID,
-    language:     Language,
-    file_info:    os.File_Info,
-    import_files: [dynamic]Import_File,
-    meshes:       []Mesh,
-    materials:    []Material,
-    textures:     []Texture,
-    // text:         []Text,
-    processing:   bool,
-    released:     bool,
+    path:         string,
+    meshes:       []ID,
+    materials:    []ID,
+    textures:     []ID,
+    // text:         []ID,
+    link:         ^Asset,
+}
+
+Catalog :: struct {
+    system:    Asset,
+    animation: Asset,
 }
 
 Manager :: struct {
-    next_asset_id:    ID,
-    system_asset_id:  ID,
-    language:         Language,
-    fonts:            map[string]Font,
-    assets:           [dynamic]Asset,
+    next_id:  ID,
+    language: Language,
+    fonts:    map[string]Font,
+    catalog:  Catalog,
+    pools: struct {
+        mesh:     pool.Pool(Mesh),
+        texture:  pool.Pool(Texture),
+        material: pool.Pool(Material),
+    },
+    items: struct {
+        mesh:     map[ID]^Mesh,
+        texture:  map[ID]^Texture,
+        material: map[ID]^Material,
+    }
 }
 
-add_asset :: proc(manager: ^Manager, path: string, force_process: bool = false) -> ^Asset {
-    asset: Asset
-    asset.id = manager.next_asset_id
-    asset.language = manager.language
+create_id :: proc(manager: ^Manager) -> ID {
+    defer manager.next_id += 1
+    return manager.next_id
+}
+
+add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..string, force_process: bool = false) {
+    asset.path = path
+    process := force_process
     if os.exists(path) {
-        error: os.Error
-        asset.file_info, error = os.stat(path, context.allocator)
-        asset.processing = force_process
+        file_info, error := os.stat(path, context.temp_allocator)
+        
+        for import_file in files {
+            if !os.exists(import_file) {
+                log.error("Failed to add file ", import_file, " to asset ", path, ": File doesn't exist.", sep = "")
+                continue
+            }
+            import_file_info, error := os.stat(path, context.temp_allocator)
+            
+            if time.diff(file_info.modification_time, import_file_info.modification_time) > 0 {
+                process = true
+            }
+        }
     }
     else {
-        asset.file_info.fullpath = path
-        asset.processing = true
+        process = true
     }
-    append(&manager.assets, asset)
-    manager.next_asset_id += 1
-    return &manager.assets[len(manager.assets) - 1]
+
+    if process {
+        meshes := make([dynamic]ID)
+        materials := make([dynamic]ID)
+        textures := make([dynamic]ID)
+        defer delete(meshes)
+        defer delete(materials)
+        defer delete(textures)
+
+        for import_file in files {
+            _, ext := os.split_filename(import_file)
+            switch ext {
+                case "glb":
+                    import_meshes, import_materials, import_textures := import_glb_asset(manager, import_file)
+                    append(&meshes, ..import_meshes[:])
+                    append(&materials, ..import_materials[:])
+                    append(&textures, ..import_textures[:])
+                    delete(import_meshes)
+                    delete(import_materials)
+                    delete(import_textures)
+                case "jpeg", "png":
+                    image, error := png.load_from_file(import_file)
+                    if error != nil {
+                        log.error("Failed to load image", import_file)
+                    }
+                    texture := add_texture(manager)
+                    texture.image = image
+                    append(&textures, texture.id)
+                case "wav":
+                    log.error("Asset file loading with extension", ext, "hasn't been implemented yet")
+                case:
+                    log.fatal("Invalid format '.", ext, "' for asset file.", sep = "")
+            }
+        }
+
+        asset.meshes = make([]ID, len(meshes))
+        copy(asset.meshes, meshes[:])
+
+        asset.materials = make([]ID, len(materials))
+        copy(asset.materials, materials[:])
+
+        asset.textures  = make([]ID, len(textures))
+        copy(asset.textures, textures[:])
+
+        write(manager, asset)
+    }
+    else {
+        load(manager, asset, path)
+    }
 }
 
-add_file :: proc(asset: ^Asset, path: string) {
-    import_file: Import_File
-    error: os.Error
-    if !os.exists(path) {
-        log.error("Failed to add file ", path, " to asset ", asset.file_info.fullpath, ": File doesn't exist", sep = "")
-        return
-    }
-    import_file.info, error = os.stat(path, context.allocator)
-    
-    if !asset.processing && time.diff(asset.file_info.modification_time, import_file.info.modification_time) > 0 {
-        asset.processing = true
-    }
-
-    _, ext := os.split_filename(path)
-    switch ext {
-        case "glb":  import_file.format = .GLB
-        case "jpeg": import_file.format = .JPEG
-        case "png":  import_file.format = .PNG
-        case "wav":  import_file.format = .WAV
-        case:
-            log.fatal("Invalid format '.", ext, "'", sep = "")
-    }
-
-    append(&asset.import_files, import_file)
+add_mesh :: proc(manager: ^Manager) -> ^Mesh {
+    mesh, error := pool.get(&manager.pools.mesh)
+    mesh.id = create_id(manager)
+    manager.items.mesh[mesh.id] = mesh
+    return mesh
 }
 
-Load_Context :: struct {
-    meshes:    [dynamic]Mesh,
-    materials: [dynamic]Material,
-    textures:  [dynamic]Texture,
+get_mesh :: proc(manager: ^Manager, id: ID) -> ^Mesh {
+    if id in manager.items.mesh {
+        return manager.items.mesh[id]
+    }
+    return nil
 }
 
-import_asset_files :: proc(asset: ^Asset) {
-    load_context: Load_Context
-    defer delete(load_context.meshes)
-    defer delete(load_context.materials)
-    defer delete(load_context.textures)
+add_texture :: proc(manager: ^Manager) -> ^Texture {
+    texture, error := pool.get(&manager.pools.texture)
+    texture.id = create_id(manager)
+    manager.items.texture[texture.id] = texture
+    return texture
+}
 
-    for &file in asset.import_files {
-        switch file.format {
-            case .GLB:
-                import_glb_asset(file.info.fullpath, &load_context)
-            case .PNG:
-                image, error := png.load_from_file(file.info.fullpath)
-                append(&load_context.textures, Texture{ image = image, })
-            case .JPEG:
-                image, error := jpeg.load_from_file(file.info.fullpath)
-                append(&load_context.textures, Texture{ image = image, })
-            case .WAV:
-                log.fatal("Asset file loading with extension", file.format, "hasn't been implemented yet")
-            case:
-                log.fatal("Invalid asset file extension '.", file.format, "'", sep = "")
+get_texture :: proc(manager: ^Manager, id: ID) -> ^Texture {
+    if id in manager.items.texture {
+        return manager.items.texture[id]
+    }
+    return nil
+}
+
+add_material :: proc(manager: ^Manager) -> ^Material {
+    material, error := pool.get(&manager.pools.material)
+    material.id = create_id(manager)
+    manager.items.material[material.id] = material
+    return material
+}
+
+get_material :: proc(manager: ^Manager, id: ID) -> ^Material {
+    if id in manager.items.material {
+        return manager.items.material[id]
+    }
+    return nil
+}
+
+write :: proc(manager: ^Manager, asset: ^Asset) {
+    total_size := size_of(File_Header)
+
+    material_id_to_index := make(map[ID]u32)
+    defer delete(material_id_to_index)
+    material_id_to_index[0] = 0
+
+    texture_id_to_index := make(map[ID]u32)
+    defer delete(texture_id_to_index)
+    texture_id_to_index[0] = 0
+
+    for id, index in asset.textures {
+        texture := get_texture(manager, id)
+        if texture == nil {
+            log.error("Failed to find asset texture with ID", id, "when writing asset file.")
+        }
+        total_size += get_serialized_size_image(texture.image)
+        texture_id_to_index[id] = u32(index+1)
+    }
+
+    for id, index in asset.materials {
+        material := get_material(manager, id)
+        if material == nil {
+            log.error("Failed to find asset material with ID", id, "when writing asset file.")
+        }
+        else {
+            total_size += get_serialized_size_material(material)
+            material_id_to_index[id] = u32(index+1)
         }
     }
 
-    asset.meshes = make([]Mesh, len(load_context.meshes))
-    copy(asset.meshes, load_context.meshes[:])
-
-    asset.materials = make([]Material, len(load_context.materials))
-    copy(asset.materials, load_context.materials[:])
-
-    asset.textures  = make([]Texture, len(load_context.textures))
-    copy(asset.textures, load_context.textures[:])
-}
-
-write :: proc(asset: ^Asset) {
-    total_size := size_of(File_Header)
-
-    for mesh in asset.meshes {
-        total_size += get_serialized_size_mesh(mesh)
+    for id in asset.meshes {
+        mesh := get_mesh(manager, id)
+        if mesh == nil {
+            log.error("Failed to find asset mesh with ID", id, "when writing asset file.")
+        }
+        else {
+            total_size += get_serialized_size_mesh(mesh)
+        }
     }
 
-    for material in asset.materials {
-        total_size += get_serialized_size_material(material)
-    }
-
-    for texture in asset.textures {
-        total_size += get_serialized_size_image(texture.image)
-    }
-
-    block, error := make([]byte, total_size, context.allocator)
+    memory, error := make([]byte, total_size, context.allocator)
     if error != nil do log.fatal("Failed to allocate arena for asset processing")
-    defer delete(block)
+    defer delete(memory)
 
-    arena: mem.Arena
-    mem.arena_init(&arena, block)
-    allocator := mem.arena_allocator(&arena)
-
-    header := new(File_Header, allocator)
-    header^ = {
+    block := memory
+    dump_to_memory(block, File_Header{
         magic_number = 0xffaaaacc,
         mesh_count = u32(len(asset.meshes)),
         material_count = u32(len(asset.materials)),
         texture_count = u32(len(asset.textures)),
+    })
+    block = block[size_of(File_Header):]
+
+    for id in asset.textures {
+        texture := get_texture(manager, id)
+        size := serialize_image(block, texture.image)
+        block = block[size:]
     }
 
-    for mesh in asset.meshes {
-        serialize_mesh(allocator, mesh)
+    for id in asset.materials {
+        material := get_material(manager, id)
+        size := serialize_material(block, material, texture_id_to_index)
+        block = block[size:]
     }
 
-    for material in asset.materials {
-        serialize_material(allocator, material)
+    for id in asset.meshes {
+        mesh := get_mesh(manager, id)
+        size := serialize_mesh(block, mesh, material_id_to_index)
+        block = block[size:]
     }
 
-    for texture in asset.textures {
-        serialize_image(allocator, texture.image)
-    }
-
-    assert(arena.offset == int(total_size))
-
-    write_error := os.write_entire_file(asset.file_info.fullpath, block)
-    if write_error != nil do log.fatal("Failed to write asset file", asset.file_info.fullpath)
-    else                  do log.info("Asset", asset.file_info.fullpath, "was successfully written")
+    write_error := os.write_entire_file(asset.path, memory)
+    if write_error != nil do log.fatal("Failed to write asset file", asset.path)
+    else                  do log.info("Asset", asset.path, "was successfully written")
 }
 
-load :: proc(asset: ^Asset) {
-    path := asset.file_info.fullpath
+load :: proc(manager: ^Manager, asset: ^Asset, path: string) {
     data, error := os.read_entire_file(path, context.allocator)
     defer delete(data)
     if error != nil {
@@ -206,89 +268,64 @@ load :: proc(asset: ^Asset) {
     }
     block := data[size_of(File_Header):]
 
-    asset.meshes = make([]Mesh, header.mesh_count)
-    asset.materials = make([]Material, header.material_count)
-    asset.textures = make([]Texture, header.texture_count)
-
-    for &mesh in asset.meshes {
-        size: int
-        mesh, size = deserialize_mesh(block)
-        block = block[size:]
+    if header.texture_count > 0 {
+        asset.textures = make([]ID, header.texture_count)
+    }
+    if header.material_count > 0 {
+        asset.materials = make([]ID, header.material_count)
+    }
+    if header.mesh_count > 0 {
+        asset.meshes = make([]ID, header.mesh_count)
     }
 
-    for &material in asset.materials {
-        size: int
-        material, size = deserialize_material(block)
-        block = block[size:]
-    }
-
-    for &texture in asset.textures {
+    for &id in asset.textures {
+        texture := add_texture(manager)
+        id = texture.id
         image, size := deserialize_image(block)
         texture.image = image
         block = block[size:]
     }
 
-    log.info("Loaded asset file", path)
+    for &id in asset.materials {
+        material := add_material(manager)
+        id = material.id
+        size := deserialize_material(material, block, asset.textures)
+        block = block[size:]
+    }
 
-    asset.released = false
+    for &id in asset.meshes {
+        mesh := add_mesh(manager)
+        id = mesh.id
+        size := deserialize_mesh(mesh, block, asset.materials)
+        block = block[size:]
+    }
+
+    log.info("Loaded asset file", path)
 }
 
-release :: proc(asset: ^Asset) {
-    if asset.released {
-        log.warn("Skipping release of already released asset.")
-        return
-    }
-
-    // Import files
-    for import_file in asset.import_files do os.file_info_delete(import_file.info, context.allocator)
-    if len(asset.import_files) > 0 do delete(asset.import_files)
-
+release :: proc(manager: ^Manager, asset: ^Asset) {
     // Meshes
-    for mesh in asset.meshes {
-        delete(mesh.name)
-        for primitive in mesh.primitives {
-            if len(primitive.positions) > 0  do delete(primitive.positions)
-            if len(primitive.indices) > 0    do delete(primitive.indices)
-            if len(primitive.attributes) > 0 do delete(primitive.attributes)
-        }
-        delete(mesh.primitives)
+    for id in asset.meshes {
+        mesh := get_mesh(manager, id)
+        release_mesh(mesh)
     }
-    if len(asset.meshes) > 0 do delete(asset.meshes)
 
     // Materials
-    for material in asset.materials {
+    for id in asset.materials {
+        material := get_material(manager, id)
         delete(material.name)
     }
-    if len(asset.materials) > 0 do delete(asset.materials)
 
     // Textures
-    for texture in asset.textures do img.destroy(texture.image)
-    if len(asset.textures) > 0 do delete(asset.textures)
-
-    asset.released = true
-}
-
-release_assets :: proc(manager: ^Manager) {
-    for &asset in manager.assets[1:] {
-        release(&asset)
+    for id in asset.textures {
+        texture := get_texture(manager, id)
+        img.destroy(texture.image)
     }
-    delete(manager.assets)
-}
-
-get_mesh_by_name :: proc(asset: ^Asset, name: string) -> ^Mesh {
-    result: ^Mesh = nil
-    for &mesh in asset.meshes {
-        if mesh.name == name {
-            result = &mesh
-            break
-        }
-    }
-    return result
 }
 
 get_font :: proc(manager: ^Manager, name: string) -> ^Font {
     if name not_in manager.fonts {
-        log.warn("Failed to find", name, "font. Using default font instead")
+        log.fatal("Failed to find '", name, "' font. Available fonts: ", slice.map_keys(manager.fonts), sep="")
         return &manager.fonts["DejaVuSansMono"]
     }
     return &manager.fonts[name]
@@ -296,15 +333,22 @@ get_font :: proc(manager: ^Manager, name: string) -> ^Font {
 
 initialize_manager :: proc(manager: ^Manager) {
     manager.language = .English
+
+    error_mesh := pool.init(&manager.pools.mesh, "link")
+    error_material := pool.init(&manager.pools.material, "link")
+    error_texture := pool.init(&manager.pools.texture, "link")
+    if error_mesh != nil || error_material != nil || error_texture != nil {
+        log.fatal("Failed to initialize asset manager pools.")
+    }
+    manager.next_id = 1
     
-    // empty asset for id 0
-    add_asset(manager, "")
-
-    system_asset := add_asset(manager, "file/asset/system/system.ass", force_process = true)
-
     add_font(manager, "DejaVuSansMono")
     add_font(manager, "DejaVuSans")
     add_font(manager, "BlackChancery")
 
-    manager.system_asset_id = system_asset.id
+    add_asset(manager, &manager.catalog.system, "file/asset/system/system.ass", 
+        "file/asset/system/grid.glb",
+        "file/asset/system/empty.png",
+        force_process = true
+    )
 }

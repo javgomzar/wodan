@@ -3,10 +3,10 @@ package common
 import "core:fmt"
 import "core:log"
 import "core:mem"
-import "core:container/pool"
 import "core:reflect"
 import "core:strings"
 import "base:runtime"
+import "core:container/pool"
 import "../asset"
 
 
@@ -87,14 +87,17 @@ UI_Context :: struct {
 }
 
 @(private="file")
-ui_context: UI_Context
+ui_context: ^UI_Context
 
 initialize_ui_context :: proc(memory: ^Game_Memory) {
     error := pool.init(&ui_context.pool, "link")
     if error != nil do log.fatal("Failed to initialize UI element pool")
+    memory.ui_context.input = &memory.input
+    memory.ui_context.asset_manager = &memory.asset_manager
+}
 
-    ui_context.input = &memory.input
-    ui_context.asset_manager = &memory.asset_manager
+reload_ui_context :: proc(memory: ^Game_Memory) {
+    ui_context = &memory.ui_context
 }
 
 create_ui_element :: proc(
@@ -128,6 +131,9 @@ create_ui_element :: proc(
 
     if len(text) > 0 {
         element.font = asset.get_font(ui_context.asset_manager, font)
+        if element.font == nil {
+            log.fatal("Failed to find font '", font, "'.", sep="")
+        }
         element.text = text
         element.points = points
 

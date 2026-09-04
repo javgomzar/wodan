@@ -23,6 +23,12 @@ float conductor_fresnel(float f0, float v_dot_h) {
 
 float4 main(VS_OUT vout): SV_TARGET {
     float3 n = normalize(vout.normal);
+    // if (normal_texture_index > 0) {
+    //     Texture2D normal_texture = ResourceDescriptorHeap[normal_texture_index];
+    //     float3 sampled_value = normal_texture.Sample(linear_wrap, vout.texture);
+    //     n = normalize(n + 2.0 * sampled_value - 1.0);
+    // }
+
     float3 v = normalize(camera_position - vout.position);
     // float3 h = normalize(v - light_direction);
     // float alpha_sq = pow(roughness, 4);

@@ -2,7 +2,6 @@ package test
 
 import "core:testing"
 import "core:slice"
-import "core:os"
 import "../asset"
 
 
@@ -40,69 +39,127 @@ test_serialization_slice :: proc(t: ^testing.T) {
     delete(result)
 }
 
-test_asset_loading :: proc(t: ^testing.T, manager: ^asset.Manager, path: string, import_files: []string) {
-    test_asset := asset.add_asset(manager, path)
+@(test)
+test_serialization_material :: proc(t: ^testing.T) {
+    material: asset.Material = asset.default_material
+    material.name = "Test"
 
-    for import_path in import_files {
-        asset.add_file(test_asset, import_path)
-    }
+    expected_size := asset.get_serialized_size_material(&material)
+    memory := make([]byte, expected_size)
+    defer delete(memory)
 
-    asset.import_asset_files(test_asset)
-    asset.write(test_asset)
+    texture_id_to_index := make(map[asset.ID]u32)
+    defer delete(texture_id_to_index)
+    texture_id_to_index[0] = 0
 
-    loaded_asset: asset.Asset
-    error: os.Error
-    loaded_asset.file_info, error = os.stat(path, context.allocator)
-    asset.load(&loaded_asset)
+    write_size := asset.serialize_material(memory, &material, texture_id_to_index)
+    testing.expect(t, expected_size == write_size)
 
-    testing.expect(t, len(test_asset.meshes) == len(loaded_asset.meshes))
-    testing.expect(t, len(test_asset.materials) == len(loaded_asset.materials))
-    testing.expect(t, len(test_asset.textures) == len(loaded_asset.textures))
+    deserialized_material: asset.Material
+    read_size := asset.deserialize_material(&deserialized_material, memory, {})
+    testing.expect(t, write_size == read_size)
 
-    for mesh, index in test_asset.meshes {
-        loaded_mesh := loaded_asset.meshes[index]
-        testing.expect(t, mesh.name == loaded_mesh.name)
-        for primitive, p_index in mesh.primitives {
-            loaded_primitive := loaded_mesh.primitives[p_index]
-            testing.expect(t, primitive.topology == loaded_primitive.topology)
-            testing.expect(t, slice.equal(primitive.positions, loaded_primitive.positions))
-            testing.expect(t, slice.equal(primitive.indices, loaded_primitive.indices))
-            testing.expect(t, slice.equal(primitive.attributes, loaded_primitive.attributes))
-        }
-    }
+    testing.expect(t, material.base_color == deserialized_material.base_color)
+    testing.expect(t, material.metallic == deserialized_material.metallic)
+    testing.expect(t, material.roughness == deserialized_material.roughness)
+    testing.expect(t, material.emissive == deserialized_material.emissive)
+    testing.expect(t, material.specular == deserialized_material.specular)
 
-    for material, index in test_asset.materials {
-        loaded_material := loaded_asset.materials[index]
-        testing.expect(t, material.name == loaded_material.name)
-        testing.expect(t, material.base_color == loaded_material.base_color)
-        testing.expect(t, material.metallic == loaded_material.metallic)
-        testing.expect(t, material.roughness == loaded_material.roughness)
-    }
-
-    for texture, index in test_asset.textures {
-        image := texture.image
-        loaded_image := loaded_asset.textures[index].image
-        testing.expect(t, image.width == loaded_image.width)
-        testing.expect(t, image.height == loaded_image.height)
-        testing.expect(t, image.depth == loaded_image.depth)
-        testing.expect(t, image.channels == loaded_image.channels)
-        testing.expect(t, slice.equal(image.pixels.buf[:], loaded_image.pixels.buf[:]))
-    }
-
-    asset.release(&loaded_asset)
+    delete(deserialized_material.name)
 }
 
 @(test)
-test_asset_loading_box :: proc(t: ^testing.T) {
-    manager: asset.Manager
-    asset.initialize_manager(&manager)
+test_serialization_mesh :: proc(t: ^testing.T) {
+    mesh: asset.Mesh
+    mesh.name = "Test"
 
-    test_asset_loading(t, &manager, "file/asset/test/box.ass", {
-        "D:/TestAssets/glTF-Sample-Assets-main/Models/Box/glTF-Binary/Box.glb",
-        "D:/TestAssets/glTF-Sample-Assets-main/Models/BoxTextured/glTF-Binary/BoxTextured.glb",
-    })
+    positions := [3]asset.Vertex_Position{
+        {0, 0, 0},
+        {0, 1, 0},
+        {0, 0, 1},
+    }
 
-    asset.release_assets(&manager)
+    attributes := [3]asset.Vertex_Attributes{
+        {
+            color = {1, 0, 0, 1},
+            normal = {1, 0, 0},
+            texture = {0, 0},
+        },
+        {
+            color = {0, 1, 0, 1},
+            normal = {0, 1, 0},
+            texture = {0, 1},
+        },
+        {
+            color = {0, 0, 1, 1},
+            normal = {0, 0, 1},
+            texture = {1, 0},
+        },
+    }
+
+    joints := [3]asset.Vertex_Joint{
+        {
+            joints = {0, 1, 2, 3},
+            weights = {1, 0, 0, 0},
+        },
+        {
+            joints = {0, 1, 2, 3},
+            weights = {0, 1, 0, 0},
+        },
+        {
+            joints = {0, 1, 2, 3},
+            weights = {0, 0, 1, 0},
+        },
+    }
+
+    indices := [3]u32{0, 1, 2}
+
+    primitives := [2]asset.Primitive{
+        {
+            topology = .Triangle,
+            positions = positions[:],
+            attributes = attributes[:],
+            joints = joints[:],
+            indices = indices[:],
+        },
+        {
+            topology = .Triangle_Strip,
+            positions = positions[:],
+            attributes = attributes[:],
+            joints = joints[:],
+            indices = indices[:],
+        },
+    }
+
+    mesh.primitives = primitives[:]
+
+    expected_size := asset.get_serialized_size_mesh(&mesh)
+    block := make([]byte, expected_size)
+    defer delete(block)
+
+    material_id_to_index := make(map[asset.ID]u32)
+    defer delete(material_id_to_index)
+    material_id_to_index[0] = 0
+
+    write_size := asset.serialize_mesh(block, &mesh, material_id_to_index)
+    testing.expect(t, expected_size == write_size)
+
+    deserialized_mesh: asset.Mesh
+    read_size := asset.deserialize_mesh(&deserialized_mesh, block, {})
+    testing.expect(t, write_size == read_size)
+
+    testing.expect(t, mesh.name == deserialized_mesh.name)
+    testing.expect(t, len(mesh.primitives) == len(deserialized_mesh.primitives))
+    for primitive, index in mesh.primitives {
+        deserialized_primitive := deserialized_mesh.primitives[index]
+        testing.expect(t, primitive.topology == deserialized_primitive.topology)
+        testing.expect(t, slice.equal(primitive.positions, deserialized_primitive.positions))
+        testing.expect(t, slice.equal(primitive.indices, deserialized_primitive.indices))
+        testing.expect(t, slice.equal(primitive.attributes, deserialized_primitive.attributes))
+        testing.expect(t, slice.equal(primitive.joints, deserialized_primitive.joints))
+    }
+
+    asset.release_mesh(&deserialized_mesh)
 }
 
 @(test)

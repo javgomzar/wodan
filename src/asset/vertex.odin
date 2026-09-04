@@ -18,6 +18,11 @@ Vertex_Text :: struct {
     color: [4]f32,
 }
 
+Vertex_Joint :: struct {
+    joints:  [4]u8,
+    weights: [4]f32,
+}
+
 Vertex_Buffer :: struct($T: typeid) {
     capacity: int,
     count: int,

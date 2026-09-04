@@ -10,6 +10,7 @@ import "../asset"
 
 Game_Memory :: struct {
     input:         Input_Context,
+    ui_context:    UI_Context,
     renderer:      Renderer_Context,
     render_group:  Render_Group,
     asset_manager: asset.Manager,
