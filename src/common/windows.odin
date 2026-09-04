@@ -81,36 +81,6 @@ log_level_string :: proc(level: log.Level) -> string {
     return "?INVALID"
 }
 
-game_log :: proc(data: rawptr, level: log.Level, text: string, options: log.Options, location := #caller_location) {
-    log_data := (^Log_Data)(data)
-    
-    now := time.now()
-
-    year, month, day := time.date(now)
-    hour, minute, second := time.clock(now)
-
-    date_time := fmt.tprintf("%d-%02d-%02d %02d:%02d:%02d ", year, month, day, hour, minute, second)
-    wdate_time := w32.utf8_to_wstring(date_time)
-    
-    result := w32.SetConsoleTextAttribute(log_data.console, w32.FOREGROUND_RED | w32.FOREGROUND_GREEN | w32.FOREGROUND_BLUE)
-    result = w32.WriteConsoleW(log_data.console, rawptr(wdate_time), 22, nil, nil)
-
-    w32.SetConsoleTextAttribute(log_data.console, log_level_color(level))
-    wlevel := w32.utf8_to_wstring(log_level_string(level))
-    result = w32.WriteConsoleW(log_data.console, rawptr(wlevel), 8, nil, nil)
-
-    result = w32.SetConsoleTextAttribute(log_data.console, w32.FOREGROUND_RED | w32.FOREGROUND_GREEN | w32.FOREGROUND_BLUE)
-    wmessage := w32.utf8_to_wstring(text)
-    result = w32.WriteConsoleW(log_data.console, rawptr(wmessage), u32(len(text)), nil, nil)
-
-    wline_break := w32.utf8_to_wstring("\n")
-    result = w32.WriteConsoleW(log_data.console, rawptr(wline_break), 1, nil, nil)
-
-    if level == .Fatal {
-        os.exit(1)
-    }
-}
-
 get_process_memory :: proc() -> (u64, bool) {
     GetProcessMemoryInfo_Proc :: proc "stdcall" (
         w32.HANDLE,
@@ -429,6 +399,36 @@ process_messages :: proc(window: w32.HWND, input: ^common.Input_Context) {
                 w32.TranslateMessage(&msg)
                 w32.DispatchMessageW(&msg)
         }
+    }
+}
+
+game_log :: proc(data: rawptr, level: log.Level, text: string, options: log.Options, location := #caller_location) {
+    log_data := (^Log_Data)(data)
+    
+    now := time.now()
+
+    year, month, day := time.date(now)
+    hour, minute, second := time.clock(now)
+
+    date_time := fmt.tprintf("%d-%02d-%02d %02d:%02d:%02d ", year, month, day, hour, minute, second)
+    wdate_time := w32.utf8_to_wstring(date_time)
+    
+    result := w32.SetConsoleTextAttribute(log_data.console, w32.FOREGROUND_RED | w32.FOREGROUND_GREEN | w32.FOREGROUND_BLUE)
+    result = w32.WriteConsoleW(log_data.console, rawptr(wdate_time), 22, nil, nil)
+
+    w32.SetConsoleTextAttribute(log_data.console, log_level_color(level))
+    wlevel := w32.utf8_to_wstring(log_level_string(level))
+    result = w32.WriteConsoleW(log_data.console, rawptr(wlevel), 8, nil, nil)
+
+    result = w32.SetConsoleTextAttribute(log_data.console, w32.FOREGROUND_RED | w32.FOREGROUND_GREEN | w32.FOREGROUND_BLUE)
+    wmessage := w32.utf8_to_wstring(text)
+    result = w32.WriteConsoleW(log_data.console, rawptr(wmessage), u32(len(text)), nil, nil)
+
+    wline_break := w32.utf8_to_wstring("\n")
+    result = w32.WriteConsoleW(log_data.console, rawptr(wline_break), 1, nil, nil)
+
+    if level == .Fatal {
+        os.exit(1) 
     }
 }
 
