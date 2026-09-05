@@ -1,4 +1,4 @@
-package common
+package game
 
 import "core:log"
 import "core:math"
@@ -221,7 +221,7 @@ push_point :: proc(group: ^Render_Group, point: [2]f32, color: [4]f32 = {1, 1, 1
     push_rect(group, point.x, point.y, 2, 2, color = color)
 }
 
-push_segment :: proc(group: ^Render_Group, start: [2]f32, end: [2]f32, color: [4]f32 = {1, 1, 1, 1}) {
+push_segment_screen :: proc(group: ^Render_Group, start: [2]f32, end: [2]f32, color: [4]f32 = {1, 1, 1, 1}) {
     entry := add_entry(group, 
         .Line,
         .Screen_Line,
@@ -233,6 +233,47 @@ push_segment :: proc(group: ^Render_Group, start: [2]f32, end: [2]f32, color: [4
     vertices := entry.positions.memory
     vertices[0] = {start.x, start.y, 0}
     vertices[1] = {end.x, end.y, 0}
+}
+
+push_segment_world :: proc(
+    group: ^Render_Group,
+    start: [3]f32,
+    end: [3]f32,
+    color: [4]f32 = {1, 1, 1, 1},
+) {
+    entry := add_entry(group,
+        .Line,
+        .World_Line,
+        dynamic_buffer = true,
+        material = asset.get_default_material(color),
+    )
+
+    entry.positions = asset.push_vertices(&group.positions, 2)
+    vertices := entry.positions.memory
+    vertices[0] = {start.x, start.y, start.z}
+    vertices[1] = {end.x, end.y, end.z}
+}
+
+push_debug_skeleton :: proc(group: ^Render_Group, skeleton: asset.ID) {
+    skeleton := asset.get_skeleton(group.asset_manager, skeleton)
+    if skeleton != nil {
+        for bone in skeleton.joints {
+            if bone.parent != -1 {
+                parent := skeleton.joints[bone.parent]
+                entry := add_entry(group,
+                    .Line,
+                    .Debug_Skeleton,
+                    dynamic_buffer = true,
+                    material = asset.get_default_material(Color[.Red]),
+                )
+
+                entry.positions = asset.push_vertices(&group.positions, 2)
+                vertices := entry.positions.memory
+                vertices[0] = {bone.global_bind[0, 3], bone.global_bind[1, 3], bone.global_bind[2, 3]}
+                vertices[1] = {parent.global_bind[0, 3], parent.global_bind[1, 3], parent.global_bind[2, 3]}
+            }
+        }
+    }
 }
 
 push_rect :: proc(

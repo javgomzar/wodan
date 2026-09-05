@@ -1,4 +1,4 @@
-package common
+package game
 
 import "vendor:directx/dxc"
 import "vendor:directx/d3d12"
@@ -93,7 +93,8 @@ Shader_Pipeline_ID :: enum {
     Text_Clean_Stencil,
 
 // 3D
-    Grid,
+    World_Line,
+    Debug_Skeleton,
     Mesh,
     Sky,
 }
@@ -179,7 +180,14 @@ shader_pipeline_entries := [Shader_Pipeline_ID]Shader_Pipeline_Entry {
         }
     },
 
-    .Grid = {
+    .World_Line = {
+        primitive = .LINE,
+        stage = #partial {
+            .Vertex = .Vertex_World,
+            .Pixel = .Pixel_Color,
+        },
+    },
+    .Debug_Skeleton = {
         primitive = .LINE,
         stage = #partial {
             .Vertex = .Vertex_World,
@@ -606,6 +614,8 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
     }
 
     #partial switch id {
+        case .Debug_Skeleton:
+            depth_stencil_desc.DepthEnable = w32.FALSE
         case .Winding_Number:
             depth_stencil_desc.DepthEnable = w32.FALSE
             depth_stencil_desc.StencilEnable = w32.TRUE

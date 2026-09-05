@@ -1,4 +1,4 @@
-package common
+package game
 
 import "core:mem"
 import "core:log"
@@ -7,7 +7,7 @@ import w32 "core:sys/windows"
 import "vendor:directx/d3d12"
 import "vendor:directx/dxgi"
 import "../asset"
-
+import "../common"
 
 when ODIN_OS == .Windows {
 
@@ -918,8 +918,8 @@ handle_resize :: proc(renderer: ^Renderer_Context, render_group: ^Render_Group) 
 }
 
 render :: proc(memory: ^Game_Memory) {
-    timer := start_timer(.Rendering)
-    defer end_timer(timer)
+    timer := common.start_timer(.Rendering)
+    defer common.end_timer(timer)
 
     renderer := &memory.renderer
     group := &memory.render_group

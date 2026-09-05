@@ -3,11 +3,13 @@ package asset
 import "core:os"
 import "core:log"
 import "core:strings"
+import "core:math/linalg"
 import vmem "core:mem/virtual"
 import img "core:image"
 import "core:image/png"
 import "core:image/jpeg"
 import "core:encoding/json"
+import "../common"
 
 
 GLB_Header :: struct {
@@ -32,12 +34,13 @@ GLTF_Asset_Header :: struct {
 }
 
 GLTF_Node :: struct {
-    children:    []int,
-    transform:   [16]f32 `json:"matrix"`,
-    rotation:    [4]f32,
-    scale:       [3]f32,
-    translation: [3]f32,
-    mesh:        int,
+    name:        string,
+    children:    Maybe([]int),
+    transform:   Maybe([16]f32) `json:"matrix"`,
+    rotation:    Maybe([4]f32),
+    scale:       Maybe([3]f32),
+    translation: Maybe([3]f32),
+    mesh:        Maybe(int),
 }
 
 GLTF_Scene :: struct {
@@ -164,6 +167,33 @@ GLTF_Image :: struct {
     mimeType: string,
 }
 
+GLTF_Animation_Channel :: struct {
+    sampler: int,
+    target: struct {
+        node: int,
+        path: string,
+    },
+}
+
+GLTF_Sampler :: struct {
+    input:         int,
+    output:        int,
+    interpolation: string,
+}
+
+GLTF_Animation :: struct {
+    name:     string,
+    channels: []GLTF_Animation_Channel,
+    samplers: []GLTF_Sampler,
+}
+
+GLTF_Skin :: struct {
+    name:                string,
+    inverseBindMatrices: int,
+    joints:              []int,
+    skeleton:            Maybe(int),
+}
+
 GLTF_Asset :: struct {
     asset:       GLTF_Asset_Header,
     scene:       int,
@@ -173,6 +203,8 @@ GLTF_Asset :: struct {
     textures:    []GLTF_Texture,
     images:      []GLTF_Image,
     meshes:      []GLTF_Mesh,
+    skins:       []GLTF_Skin,
+    animations:  []GLTF_Animation,
     accessors:   []GLTF_Accessor,
     bufferViews: []GLTF_Buffer_View,
     buffers:     []GLTF_Buffer,
@@ -185,7 +217,13 @@ parse_gltf_json :: proc(memory: []byte) -> GLTF_Asset {
     return gltf_asset
 }
 
-import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
+import_glb_asset :: proc(manager: ^Manager, path: string) -> (
+    meshes:    [dynamic]ID,
+    materials: [dynamic]ID,
+    textures:  [dynamic]ID,
+    skeletons: [dynamic]ID,
+) {
+    path := path
     arena: vmem.Arena
     error := vmem.arena_init_growing(&arena)
     if error != nil do log.fatal("Failed to initialize memory arena for GLB asset", path)
@@ -213,213 +251,311 @@ import_glb_asset :: proc(path: string, load_context: ^Load_Context) {
     pointer = pointer[size_of(bin_chunk):]
     gltf_asset.buffers[0].memory = pointer
 
+    n_images    := len(gltf_asset.images)
+    n_materials := len(gltf_asset.materials)
+    n_meshes    := len(gltf_asset.meshes)
+
     // Load textures
-    for gltf_image in gltf_asset.images {
-        bufferview := gltf_asset.bufferViews[gltf_image.bufferView]
-        pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset:]
-        image: ^img.Image
-        error: img.Error
-        switch gltf_image.mimeType {
-            case "image/jpeg":
-                image, error = jpeg.load_from_bytes(pointer)
-            case "image/png":
-                image, error = png.load_from_bytes(pointer)
-            case:
-                log.warn("Skipping unknown image mime type", gltf_image.mimeType)
-                continue
+    if n_images > 0 {
+        start_textures := common.get_wall_clock()
+        for gltf_image in gltf_asset.images {
+            bufferview := gltf_asset.bufferViews[gltf_image.bufferView]
+            pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset:]
+            image: ^img.Image
+            error: img.Error
+            switch gltf_image.mimeType {
+                case "image/jpeg":
+                    image, error = jpeg.load_from_bytes(pointer)
+                case "image/png":
+                    image, error = png.load_from_bytes(pointer)
+                case:
+                    log.warn("Skipping unknown image mime type", gltf_image.mimeType)
+                    continue
+            }
+            texture := add_texture(manager)
+            texture.image = image
+            append(&textures, texture.id)
         }
-        texture := add_texture(manager)
-        texture.image = image
-        append(&textures, texture.id)
+        end_textures := common.get_wall_clock()
+        log.info("GLTF:", n_images, n_images > 1 ? "textures" : "texture", "loaded in",
+            common.get_seconds_elapsed(start_textures, end_textures), "seconds."
+        )
     }
 
     // Load materials
-    for gltf_material in gltf_asset.materials {
-        material := add_material(manager)
-        material.name = strings.clone(gltf_material.name)
+    if n_materials > 0 {
+        start_materials := common.get_wall_clock()
+        for gltf_material in gltf_asset.materials {
+            material := add_material(manager)
+            material.name = strings.clone(gltf_material.name)
+    
+            base_color, ok_color := gltf_material.pbrMetallicRoughness.baseColorFactor.?
+            if !ok_color do base_color = {1, 1, 1, 1}
+            material.base_color = base_color
+            
+            metallic, ok_metallic := gltf_material.pbrMetallicRoughness.metallicFactor.?
+            if !ok_metallic do metallic = 1.0
+            material.metallic = metallic
+    
+            roughness, ok_roughness := gltf_material.pbrMetallicRoughness.roughnessFactor.?
+            if !ok_roughness do roughness = 1.0
+            material.roughness = roughness
+    
+            base_color_texture, ok_base_color_texture := gltf_material.pbrMetallicRoughness.baseColorTexture.?
+            normal_texture, ok_normal_texture         := gltf_material.normalTexture.?
+            pbr_texture, ok_pbr_texture               := gltf_material.pbrMetallicRoughness.metallicRoughnessTexture.?
+            if ok_base_color_texture || ok_normal_texture || ok_pbr_texture {
+                if ok_base_color_texture {
+                    image_index := gltf_asset.textures[base_color_texture.index].source
+                    material.texture.color = textures[image_index]
+                }
+    
+                if ok_normal_texture {
+                    image_index := gltf_asset.textures[normal_texture.index].source
+                    material.texture.normal = textures[image_index]
+                }
+    
+                if ok_pbr_texture {
+                    image_index := gltf_asset.textures[pbr_texture.index].source
+                    material.texture.pbr = textures[image_index]
+                }
+            }
+    
+            append(&materials, material.id)
+        }
+        end_materials := common.get_wall_clock()
+        log.info("GLTF:", n_materials, n_materials > 1? "materials" : "material", "loaded in", 
+            common.get_seconds_elapsed(start_materials, end_materials), "seconds."
+        )
+    }
 
-        base_color, ok_color := gltf_material.pbrMetallicRoughness.baseColorFactor.?
-        if !ok_color do base_color = {1, 1, 1, 1}
-        material.base_color = base_color
-        
-        metallic, ok_metallic := gltf_material.pbrMetallicRoughness.metallicFactor.?
-        if !ok_metallic do metallic = 1.0
-        material.metallic = metallic
+    if len(gltf_asset.animations) > 0 {
+        // Load skins
+        for skin in gltf_asset.skins {
+            skeleton := add_skeleton(manager)
+            skeleton.joints = make([]Joint, len(skin.joints))
+            defer append(&skeletons, skeleton.id)
 
-        roughness, ok_roughness := gltf_material.pbrMetallicRoughness.roughnessFactor.?
-        if !ok_roughness do roughness = 1.0
-        material.roughness = roughness
+            node_index_to_joint_index := make(map[int]Joint_ID)
+            defer delete(node_index_to_joint_index)
 
-        base_color_texture, ok_base_color_texture := gltf_material.pbrMetallicRoughness.baseColorTexture.?
-        normal_texture, ok_normal_texture         := gltf_material.normalTexture.?
-        pbr_texture, ok_pbr_texture               := gltf_material.pbrMetallicRoughness.metallicRoughnessTexture.?
-        if ok_base_color_texture || ok_normal_texture || ok_pbr_texture {
-            if ok_base_color_texture {
-                image_index := gltf_asset.textures[base_color_texture.index].source
-                material.texture.color = textures[image_index]
+            // Build map node_index -> joint_index
+            for node_index, joint_index in skin.joints {
+                joint := &skeleton.joints[joint_index]
+                joint.id = Joint_ID(joint_index)
+                joint.parent = -1
+                node_index_to_joint_index[node_index] = joint.id
+            }
+            
+            // Build hierarchy
+            for node_index, joint_index in skin.joints {
+                gltf_joint := gltf_asset.nodes[node_index]
+                joint := &skeleton.joints[joint_index]
+                joint.name = strings.clone(gltf_joint.name)
+
+                if children, ok := gltf_joint.children.?; ok {
+                    for child in children {
+                        child_joint := &skeleton.joints[node_index_to_joint_index[child]]
+                        child_joint.parent = joint.id
+                    }
+                }
             }
 
-            if ok_normal_texture {
-                image_index := gltf_asset.textures[normal_texture.index].source
-                material.texture.normal = textures[image_index]
+            root_joints := make([dynamic]Joint_ID)
+            if root, ok := skin.skeleton.?; ok {
+                if root not_in node_index_to_joint_index {
+                    log.fatal("GLTF: Root joint is not in the skin joints.")
+                }
+                append(&root_joints, node_index_to_joint_index[root])
+            }
+            else {
+                for joint in skeleton.joints {
+                    if joint.parent == -1 {
+                        append(&root_joints, joint.id)
+                    }
+                }
+            }
+            assert(len(root_joints) > 0)
+            skeleton.root_joints = make([]Joint_ID, len(root_joints))
+
+            // Global transform for the skeleton
+            // TODO
+
+            accessor := gltf_asset.accessors[skin.inverseBindMatrices]
+            assert(accessor.componentType == .F32 && accessor.type == "MAT4" && accessor.count == len(skin.joints))
+            bufferview := gltf_asset.bufferViews[accessor.bufferView]
+            block := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:]
+            matrices := cast([^]f32)raw_data(block)
+            
+            for node_index, joint_index in skin.joints {
+                gltf_joint := gltf_asset.nodes[node_index]
+                joint := &skeleton.joints[joint_index]
+                joint.name = strings.clone(gltf_joint.name)
+                joint.id = Joint_ID(joint_index)
+
+                rotation: linalg.Quaternionf32 = 1
+                if vector_rotation, ok := gltf_joint.rotation.?; ok {
+                    rotation = quaternion(x=vector_rotation[0], y=vector_rotation[1], z=vector_rotation[2], w=vector_rotation[3])
+                }
+
+                translation: [3]f32
+                ok: bool
+                if translation, ok = gltf_joint.translation.?; !ok {
+                    translation = {0, 0, 0}
+                }
+
+                scale: [3]f32
+                if scale, ok = gltf_joint.scale.?; !ok {
+                    scale = {1, 1, 1}
+                }
+
+                joint.local_bind = linalg.matrix4_from_trs_f32(translation, rotation, scale)
             }
 
-            if ok_pbr_texture {
-                image_index := gltf_asset.textures[pbr_texture.index].source
-                material.texture.pbr = textures[image_index]
+            for &joint, index in skeleton.joints {
+                for i in 0..<4 {
+                    for j in 0..<4 {
+                        joint.inverse_bind[i, j] = matrices[4*i + j]
+                    }
+                }
+                matrices = matrices[16:]
             }
         }
 
-        append(&materials, material.id)
+        // Load animations
+        for animation in gltf_asset.animations {
+            for channel in animation.channels {
+                // TODO
+            }            
+        }
     }
 
     // Load meshes
-    for gltf_mesh in gltf_asset.meshes {
-        mesh := add_mesh(manager)
-        mesh.name = strings.clone(mesh.name)
-        mesh.primitives = make([]Primitive, len(gltf_mesh.primitives))
-
-        for gltf_primitive, primitive_index in gltf_mesh.primitives {
-            primitive := &mesh.primitives[primitive_index]
-
-            if material_index, material_ok := gltf_primitive.material.?; material_ok {
-                primitive.material = materials[material_index]
-            }
-
-            if mode, mode_ok := gltf_primitive.mode.?; mode_ok {
-                switch mode {
-                    case .Point:                         primitive.topology = .Point
-                    case .Line:                          primitive.topology = .Line
-                    case .Line_Loop, .Line_Strip:        primitive.topology = .Line_Strip
-                    case .Triangles:                     primitive.topology = .Triangle
-                    case .Triangle_Strip, .Triangle_Fan: primitive.topology = .Triangle_Strip
+    if n_meshes > 0 {
+        start_meshes := common.get_wall_clock()
+        for gltf_mesh in gltf_asset.meshes {
+            mesh := add_mesh(manager)
+            mesh.name = strings.clone(mesh.name)
+            mesh.primitives = make([]Primitive, len(gltf_mesh.primitives))
+    
+            for gltf_primitive, primitive_index in gltf_mesh.primitives {
+                primitive := &mesh.primitives[primitive_index]
+    
+                if material_index, material_ok := gltf_primitive.material.?; material_ok {
+                    primitive.material = materials[material_index]
                 }
-            }
-            else do primitive.topology = .Triangle
-
-            if indices, indices_ok := gltf_primitive.indices.?; indices_ok {
-                accessor := gltf_asset.accessors[indices]
-                assert(accessor.type == "SCALAR")
-
-                bufferview := gltf_asset.bufferViews[accessor.bufferView]
-                pointer := raw_data(gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:])
-                
-                primitive.indices = make([]u32, accessor.count)
-                switch accessor.componentType {
-                    case .S8:  widen_to_u32(primitive.indices, cast([^]i8)pointer, accessor.count)
-                    case .U8:  widen_to_u32(primitive.indices, cast([^]u8)pointer, accessor.count)
-                    case .S16: widen_to_u32(primitive.indices, cast([^]i16)pointer, accessor.count)
-                    case .U16: widen_to_u32(primitive.indices, cast([^]u16)pointer, accessor.count)
-                    case .U32: copy(primitive.indices, ([^]u32)(pointer)[:accessor.count])
-                    case .F32: log.fatal("Invalid type f32 for mesh indices")
+    
+                if mode, mode_ok := gltf_primitive.mode.?; mode_ok {
+                    switch mode {
+                        case .Point:                         primitive.topology = .Point
+                        case .Line:                          primitive.topology = .Line
+                        case .Line_Loop, .Line_Strip:        primitive.topology = .Line_Strip
+                        case .Triangles:                     primitive.topology = .Triangle
+                        case .Triangle_Strip, .Triangle_Fan: primitive.topology = .Triangle_Strip
+                    }
                 }
-            }
-            
-            for key, value in gltf_primitive.attributes {
-                accessor := gltf_asset.accessors[value]
-
-                switch key {
-                    case "POSITION", "NORMAL": assert(accessor.componentType == .F32 && accessor.type == "VEC3")
-                    case "COLOR_0":            assert(accessor.componentType == .F32 && (accessor.type == "VEC3" || accessor.type == "VEC4"))
-                    case "TEXCOORD_0":         assert(accessor.componentType == .F32 && accessor.type == "VEC2")
-                    case "JOINTS_0":           assert(accessor.componentType == .U8 && accessor.type == "VEC4")
-                    case "WEIGHTS_0":          assert(accessor.componentType == .F32 && accessor.type == "VEC4")
-                    case:
-                        log.warn("Skipping unknown mesh primitive attribute", key)
-                        continue
+                else do primitive.topology = .Triangle
+    
+                if indices, indices_ok := gltf_primitive.indices.?; indices_ok {
+                    accessor := gltf_asset.accessors[indices]
+                    assert(accessor.type == "SCALAR")
+    
+                    bufferview := gltf_asset.bufferViews[accessor.bufferView]
+                    pointer := raw_data(gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:])
+                    
+                    primitive.indices = make([]u32, accessor.count)
+                    switch accessor.componentType {
+                        case .S8:  widen_to_u32(primitive.indices, cast([^]i8)pointer, accessor.count)
+                        case .U8:  widen_to_u32(primitive.indices, cast([^]u8)pointer, accessor.count)
+                        case .S16: widen_to_u32(primitive.indices, cast([^]i16)pointer, accessor.count)
+                        case .U16: widen_to_u32(primitive.indices, cast([^]u16)pointer, accessor.count)
+                        case .U32: copy(primitive.indices, ([^]u32)(pointer)[:accessor.count])
+                        case .F32: log.fatal("Invalid type f32 for mesh indices")
+                    }
                 }
                 
-                bufferview := gltf_asset.bufferViews[accessor.bufferView]
-                pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:]
-
-                n_components := get_accessor_type_components(accessor.type)
-                byte_stride, byte_stride_ok := bufferview.byteStride.?
-                if !byte_stride_ok {
-                    byte_stride = n_components * get_component_type_size(.F32)
-                }
-
-                if key == "POSITION" {
-                    primitive.positions = make([]Vertex_Position, accessor.count)
-                    for i in 0..<accessor.count {
-                        vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
-                        primitive.positions[i] = { vector[0], vector[1], vector[2] }
-                    }
-                }
-                else {
-                    if len(primitive.attributes) == 0 && (key == "NORMAL" || key == "TEXCOORD_0" || key == "COLOR_0") {
-                        primitive.attributes = make([]Vertex_Attributes, accessor.count)
-                    }
-                    else if len(primitive.joints) == 0 && (key == "JOINTS_0" || key == "WEIGHTS_0") {
-                        primitive.joints = make([]Vertex_Joint, accessor.count)
-                    }
-
+                for key, value in gltf_primitive.attributes {
+                    accessor := gltf_asset.accessors[value]
+    
                     switch key {
-                        case "NORMAL": 
-                            for i in 0..<accessor.count {
-                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
-                                primitive.attributes[i].normal = { vector[0], vector[1], vector[2] }
-                            }
-                        case "TEXCOORD_0":
-                            for i in 0..<accessor.count {
-                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
-                                primitive.attributes[i].texture = { vector[0], vector[1] }
-                            }
-                        case "COLOR_0":
-                            for i in 0..<accessor.count {
-                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
-                                primitive.attributes[i].color = { vector[0], vector[1], vector[2], vector[3] }
-                            }
-                        case "JOINTS_0":
-                            for i in 0..<accessor.count {
-                                vector := cast([^]u8)raw_data(pointer[i*byte_stride:])
-                                primitive.joints[i].joints = { vector[0], vector[1], vector[2], vector[3] }
-                            }
-                        case "WEIGHTS_0":
-                            for i in 0..<accessor.count {
-                                vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
-                                primitive.joints[i].weights = { vector[0], vector[1], vector[2], vector[3] }
-                            }
+                        case "POSITION", "NORMAL": assert(accessor.componentType == .F32 && accessor.type == "VEC3")
+                        case "COLOR_0":            assert(accessor.componentType == .F32 && (accessor.type == "VEC3" || accessor.type == "VEC4"))
+                        case "TEXCOORD_0":         assert(accessor.componentType == .F32 && accessor.type == "VEC2")
+                        case "JOINTS_0":           assert(accessor.componentType == .U8 && accessor.type == "VEC4")
+                        case "WEIGHTS_0":          assert(accessor.componentType == .F32 && accessor.type == "VEC4")
+                        case:
+                            log.warn("Skipping unknown mesh primitive attribute", key)
+                            continue
+                    }
+                    
+                    bufferview := gltf_asset.bufferViews[accessor.bufferView]
+                    pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset + accessor.byteOffset:]
+    
+                    n_components := get_accessor_type_components(accessor.type)
+                    byte_stride, byte_stride_ok := bufferview.byteStride.?
+                    if !byte_stride_ok {
+                        byte_stride = n_components * get_component_type_size(.F32)
+                    }
+    
+                    if key == "POSITION" {
+                        primitive.positions = make([]Vertex_Position, accessor.count)
+                        for i in 0..<accessor.count {
+                            vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
+                            primitive.positions[i] = { vector[0], vector[1], vector[2] }
+                        }
+                    }
+                    else {
+                        if len(primitive.attributes) == 0 && (key == "NORMAL" || key == "TEXCOORD_0" || key == "COLOR_0") {
+                            primitive.attributes = make([]Vertex_Attributes, accessor.count)
+                        }
+                        else if len(primitive.joints) == 0 && (key == "JOINTS_0" || key == "WEIGHTS_0") {
+                            primitive.joints = make([]Vertex_Joint, accessor.count)
+                        }
+    
+                        switch key {
+                            case "NORMAL": 
+                                for i in 0..<accessor.count {
+                                    vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
+                                    primitive.attributes[i].normal = { vector[0], vector[1], vector[2] }
+                                }
+                            case "TEXCOORD_0":
+                                for i in 0..<accessor.count {
+                                    vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
+                                    primitive.attributes[i].texture = { vector[0], vector[1] }
+                                }
+                            case "COLOR_0":
+                                for i in 0..<accessor.count {
+                                    vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
+                                    primitive.attributes[i].color = { vector[0], vector[1], vector[2], vector[3] }
+                                }
+                            case "JOINTS_0":
+                                for i in 0..<accessor.count {
+                                    vector := cast([^]u8)raw_data(pointer[i*byte_stride:])
+                                    primitive.joints[i].joints = { vector[0], vector[1], vector[2], vector[3] }
+                                }
+                            case "WEIGHTS_0":
+                                for i in 0..<accessor.count {
+                                    vector := cast([^]f32)raw_data(pointer[i*byte_stride:])
+                                    primitive.joints[i].weights = { vector[0], vector[1], vector[2], vector[3] }
+                                }
+                        }
+                    }
+                }
+    
+                _, ok := gltf_primitive.attributes["COLOR_0"]
+                if !ok {
+                    for &attribute in primitive.attributes {
+                        attribute.color = {1, 1, 1, 1}
                     }
                 }
             }
-
-            _, ok := gltf_primitive.attributes["COLOR_0"]
-            if !ok {
-                for &attribute in primitive.attributes {
-                    attribute.color = {1, 1, 1, 1}
-                }
-            }
+            append(&meshes, mesh.id)
         }
-        append(&meshes, mesh.id)
+        end_meshes := common.get_wall_clock()
+        log.info("GLTF:", n_meshes, n_meshes > 1? "meshes" : "mesh", "loaded in", 
+            common.get_seconds_elapsed(start_meshes, end_meshes), "seconds."
+        )
     }
 
-    // Load materials
-    for material in gltf_asset.materials {
-        base_color, ok := material.pbrMetallicRoughness.baseColorFactor.?
-        if !ok do base_color = {1, 1, 1, 1}
-        append(&load_context.materials, Material{
-            name       = strings.clone(material.name),
-            base_color = base_color,
-            metallic   = material.pbrMetallicRoughness.metallicFactor,
-            roughness  = material.pbrMetallicRoughness.roughnessFactor,
-        })
-    }
-
-    // Load images
-    for gltf_image in gltf_asset.images {
-        bufferview := gltf_asset.bufferViews[gltf_image.bufferView]
-        pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset:]
-        image: ^img.Image
-        error: img.Error
-        switch gltf_image.mimeType {
-            case "image/jpeg":
-                image, error = jpeg.load_from_bytes(pointer)
-            case "image/png":
-                image, error = png.load_from_bytes(pointer)
-            case:
-                log.warn("Skipping unknown image mime type", gltf_image.mimeType)
-                continue
-        }
-        append(&load_context.textures, Texture{ image = image, })
-    }
+    return
 }

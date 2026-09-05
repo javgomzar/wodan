@@ -10,7 +10,7 @@ normalize_angle :: proc(angle: f32) -> f32 {
 	return angle;
 }
 
-update_camera :: proc(camera: ^common.Camera, input: ^common.Input_Context) {
+update_camera :: proc(camera: ^Camera, input: ^common.Input_Context) {
     delta := input.mouse.cursor - input.mouse.last_cursor
     
     if (input.mouse.middle_click.is_down) {
@@ -33,7 +33,7 @@ update_camera :: proc(camera: ^common.Camera, input: ^common.Input_Context) {
 
     if linalg.length(direction) > 0 {
         direction = linalg.normalize(direction)
-        horizontal_basis := common.get_camera_basis(camera.angle, 0)
+        horizontal_basis := get_camera_basis(camera.angle, 0)
         direction = direction.x * linalg.Vector3f32{horizontal_basis[0, 0], horizontal_basis[0, 1], horizontal_basis[0, 2]} +
                     direction.z * linalg.Vector3f32{horizontal_basis[2, 0], horizontal_basis[2, 1], horizontal_basis[2, 2]}
     

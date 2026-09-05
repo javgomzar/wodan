@@ -309,3 +309,21 @@ release_mesh :: proc(mesh: ^Mesh) {
     }
     delete(mesh.primitives)
 }
+
+Joint_ID :: distinct i32
+
+Joint :: struct {
+    id:           Joint_ID,
+    name:         string,
+    parent:       Joint_ID,
+    inverse_bind: matrix[4, 4]f32,
+    local_bind:   matrix[4, 4]f32,
+    global_bind:  matrix[4, 4]f32,
+}
+
+Skeleton :: struct {
+    id:          ID,
+    joints:      []Joint,
+    root_joints: []Joint_ID,
+    link:        ^Skeleton,
+}

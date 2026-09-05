@@ -31,6 +31,7 @@ Asset :: struct {
     meshes:       []ID,
     materials:    []ID,
     textures:     []ID,
+    skeletons:    []ID,
     // text:         []ID,
     link:         ^Asset,
 }
@@ -49,11 +50,13 @@ Manager :: struct {
         mesh:     pool.Pool(Mesh),
         texture:  pool.Pool(Texture),
         material: pool.Pool(Material),
+        skeleton: pool.Pool(Skeleton),
     },
     items: struct {
         mesh:     map[ID]^Mesh,
         texture:  map[ID]^Texture,
         material: map[ID]^Material,
+        skeleton: map[ID]^Skeleton,
     }
 }
 
@@ -85,24 +88,28 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
     }
 
     if process {
-        meshes := make([dynamic]ID)
+        meshes    := make([dynamic]ID)
         materials := make([dynamic]ID)
-        textures := make([dynamic]ID)
+        textures  := make([dynamic]ID)
+        skeletons := make([dynamic]ID)
         defer delete(meshes)
         defer delete(materials)
         defer delete(textures)
+        defer delete(skeletons)
 
         for import_file in files {
             _, ext := os.split_filename(import_file)
             switch ext {
                 case "glb":
-                    import_meshes, import_materials, import_textures := import_glb_asset(manager, import_file)
+                    import_meshes, import_materials, import_textures, import_skeletons := import_glb_asset(manager, import_file)
                     append(&meshes, ..import_meshes[:])
                     append(&materials, ..import_materials[:])
                     append(&textures, ..import_textures[:])
+                    append(&skeletons, ..import_skeletons[:])
                     delete(import_meshes)
                     delete(import_materials)
                     delete(import_textures)
+                    delete(import_skeletons)
                 case "jpeg", "png":
                     image, error := png.load_from_file(import_file)
                     if error != nil {
@@ -124,8 +131,11 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
         asset.materials = make([]ID, len(materials))
         copy(asset.materials, materials[:])
 
-        asset.textures  = make([]ID, len(textures))
+        asset.textures = make([]ID, len(textures))
         copy(asset.textures, textures[:])
+
+        asset.skeletons = make([]ID, len(skeletons))
+        copy(asset.skeletons, skeletons[:])
 
         write(manager, asset)
     }
@@ -136,6 +146,7 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
 
 add_mesh :: proc(manager: ^Manager) -> ^Mesh {
     mesh, error := pool.get(&manager.pools.mesh)
+    if error != nil do log.fatal("Failed to allocate mesh asset.")
     mesh.id = create_id(manager)
     manager.items.mesh[mesh.id] = mesh
     return mesh
@@ -150,6 +161,7 @@ get_mesh :: proc(manager: ^Manager, id: ID) -> ^Mesh {
 
 add_texture :: proc(manager: ^Manager) -> ^Texture {
     texture, error := pool.get(&manager.pools.texture)
+    if error != nil do log.fatal("Failed to allocate texture asset.")
     texture.id = create_id(manager)
     manager.items.texture[texture.id] = texture
     return texture
@@ -164,6 +176,7 @@ get_texture :: proc(manager: ^Manager, id: ID) -> ^Texture {
 
 add_material :: proc(manager: ^Manager) -> ^Material {
     material, error := pool.get(&manager.pools.material)
+    if error != nil do log.fatal("Failed to allocate material asset.")
     material.id = create_id(manager)
     manager.items.material[material.id] = material
     return material
@@ -172,6 +185,21 @@ add_material :: proc(manager: ^Manager) -> ^Material {
 get_material :: proc(manager: ^Manager, id: ID) -> ^Material {
     if id in manager.items.material {
         return manager.items.material[id]
+    }
+    return nil
+}
+
+add_skeleton :: proc(manager: ^Manager) -> ^Skeleton {
+    skeleton, error := pool.get(&manager.pools.skeleton)
+    if error != nil do log.fatal("Failed to allocate skeleton asset.")
+    skeleton.id = create_id(manager)
+    manager.items.skeleton[skeleton.id] = skeleton
+    return skeleton
+}
+
+get_skeleton :: proc(manager: ^Manager, id: ID) -> ^Skeleton {
+    if id in manager.items.skeleton {
+        return manager.items.skeleton[id]
     }
     return nil
 }

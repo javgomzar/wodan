@@ -1,4 +1,4 @@
-package common
+package game
 
 import "core:fmt"
 import "core:log"
@@ -8,6 +8,7 @@ import "core:strings"
 import "base:runtime"
 import "core:container/pool"
 import "../asset"
+import "../common"
 
 
 UI_Alignment :: enum {
@@ -76,7 +77,7 @@ UI_Element :: struct {
 
 UI_Context :: struct {
     frame:         u64,
-    input:         ^Input_Context,
+    input:         ^common.Input_Context,
     asset_manager: ^asset.Manager,
     pool:          pool.Pool(UI_Element),
     
@@ -194,7 +195,7 @@ create_ui_element :: proc(
 
     if ok {
         input := ui_context.input
-        element.hovered = cursor_is_in_rect(
+        element.hovered = common.cursor_is_in_rect(
             input.mouse.cursor,
             element.position.x, element.position.y,
             element.sizes.x.value, element.sizes.y.value,
@@ -237,6 +238,9 @@ UI_Text :: proc(
     flags:      UI_Flags = {.Draw_Text},
 ) -> ^UI_Element
 {
+    name := name
+    text := text
+    fmt_vars := fmt_vars
     element := create_ui_element(
         name, 
         {{.Text, 0}, {.Text, 0}},
@@ -422,7 +426,7 @@ update_ui :: proc(memory: ^Game_Memory) {
         if memory.debug do log.debug("Debug mode on")
     }
     if memory.debug {
-        memory_used, ok := get_process_memory()
+        memory_used, ok := common.get_process_memory()
         memory_used = memory_used / mem.Megabyte
         UI_Column("debug_info",
             UI_Text("debug_fps", "FPS: %d", int(1.0 / f32(memory.delta_time)), alignments = {.Min, .Center}),
@@ -432,7 +436,7 @@ update_ui :: proc(memory: ^Game_Memory) {
         )
 
         UI_Table("timing_table", memory.time_records, alignments = [2]UI_Alignment{.Max, .Max})
-        clear_time_records()
+        common.clear_time_records()
     }
 
     compute_layout()

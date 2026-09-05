@@ -1,4 +1,4 @@
-package common
+package game
 
 import "core:os"
 import "core:dynlib"
@@ -6,16 +6,17 @@ import "core:time"
 import "core:io"
 import "core:log"
 import "../asset"
+import "../common"
 
 
 Game_Memory :: struct {
-    input:         Input_Context,
+    input:         common.Input_Context,
     ui_context:    UI_Context,
     renderer:      Renderer_Context,
     render_group:  Render_Group,
     asset_manager: asset.Manager,
     code:          Game_Code,
-    time_records:  [Time_Record_ID]Time_Record,
+    time_records:  [common.Time_Record_ID]common.Time_Record,
     time:          f32,
     delta_time:    f32,
     initialized:   bool,

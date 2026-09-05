@@ -5,10 +5,11 @@ import "core:os"
 import "core:log"
 import "core:mem"
 import w32 "core:sys/windows"
+import "../game"
 import "../common"
 
 
-memory: common.Game_Memory
+memory: game.Game_Memory
 
 win_proc :: proc "stdcall" (window: w32.HWND, message: w32.UINT, wparam: w32.WPARAM, lparam: w32.LPARAM) -> w32.LRESULT {
     switch message {
@@ -108,10 +109,10 @@ main :: proc() {
         if error != nil do log.fatal("Failed to remove old PDB files")
     }
 
-    common.initialize_render_group(&memory.render_group, &memory.asset_manager, 1280, 720)
+    game.initialize_render_group(&memory.render_group, &memory.asset_manager, 1280, 720)
     window := create_window(memory.render_group.width, memory.render_group.height)
 
-    common.load_code(code)
+    game.load_code(code)
     code.reload(&memory)
     code.initialize(&memory)
 
@@ -125,8 +126,8 @@ main :: proc() {
 
         if input.keyboard.key[.Alt].is_down && input.keyboard.key[.F4].is_down do break
 
-        common.update_if_newer_code(&memory)
-        common.handle_resize(&memory.renderer, &memory.render_group)
+        game.update_if_newer_code(&memory)
+        game.handle_resize(&memory.renderer, &memory.render_group)
 
         memory.code.update(&memory)
 
