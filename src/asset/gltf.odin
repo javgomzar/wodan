@@ -361,25 +361,32 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 }
             }
 
-            root_joints := make([dynamic]Joint_ID)
+            root_joints := make([dynamic]int)
+            defer delete(root_joints)
             if root, ok := skin.skeleton.?; ok {
                 if root not_in node_index_to_joint_index {
                     log.fatal("GLTF: Root joint is not in the skin joints.")
                 }
-                append(&root_joints, node_index_to_joint_index[root])
+                append(&root_joints, root)
             }
             else {
                 for joint in skeleton.joints {
                     if joint.parent == -1 {
-                        append(&root_joints, joint.id)
+                        for node_id, joint_id in node_index_to_joint_index {
+                            if joint.id == joint_id {
+                                append(&root_joints, node_id)
+                            }
+                        }
                     }
                 }
             }
-            assert(len(root_joints) > 0)
-            skeleton.root_joints = make([]Joint_ID, len(root_joints))
+            assert(len(root_joints) == 1, "More than one root joint present")
+            skeleton.root_joint = node_index_to_joint_index[root_joints[0]]
 
             // Global transform for the skeleton
-            // TODO
+            global_translation := [3]f32{0, 0, 0}
+            global_rotation: linalg.Quaternionf32 = 1
+            global_scale := [3]f32{1, 1, 1}
 
             accessor := gltf_asset.accessors[skin.inverseBindMatrices]
             assert(accessor.componentType == .F32 && accessor.type == "MAT4" && accessor.count == len(skin.joints))
@@ -393,23 +400,23 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 joint.name = strings.clone(gltf_joint.name)
                 joint.id = Joint_ID(joint_index)
 
-                rotation: linalg.Quaternionf32 = 1
-                if vector_rotation, ok := gltf_joint.rotation.?; ok {
-                    rotation = quaternion(x=vector_rotation[0], y=vector_rotation[1], z=vector_rotation[2], w=vector_rotation[3])
+                joint_rotation: linalg.Quaternionf32 = global_rotation
+                if rotation, ok := gltf_joint.rotation.?; ok {
+                    joint_rotation *= quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3])
                 }
 
-                translation: [3]f32
-                ok: bool
-                if translation, ok = gltf_joint.translation.?; !ok {
-                    translation = {0, 0, 0}
+                joint_translation: [3]f32 = global_translation
+                if translation, ok := gltf_joint.translation.?; ok {
+                    joint_translation += translation
                 }
 
-                scale: [3]f32
-                if scale, ok = gltf_joint.scale.?; !ok {
-                    scale = {1, 1, 1}
+                joint_scale: [3]f32 = global_scale
+                if scale, ok := gltf_joint.scale.?; ok {
+                    joint_scale *= scale
                 }
 
-                joint.local_bind = linalg.matrix4_from_trs_f32(translation, rotation, scale)
+                transform := linalg.matrix4_from_trs_f32(joint_translation, joint_rotation, joint_scale)
+                joint.local_bind = transform
             }
 
             for &joint, index in skeleton.joints {

@@ -322,8 +322,8 @@ Joint :: struct {
 }
 
 Skeleton :: struct {
-    id:          ID,
-    joints:      []Joint,
-    root_joints: []Joint_ID,
-    link:        ^Skeleton,
+    id:         ID,
+    joints:     []Joint,
+    root_joint: Joint_ID,
+    link:       ^Skeleton,
 }
