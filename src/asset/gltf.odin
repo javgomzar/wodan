@@ -5,10 +5,8 @@ import "core:log"
 import "core:strings"
 import "core:math/linalg"
 import vmem "core:mem/virtual"
-import img "core:image"
-import "core:image/png"
-import "core:image/jpeg"
 import "core:encoding/json"
+import stbi "vendor:stb/image"
 import "../common"
 
 
@@ -260,20 +258,20 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
         start_textures := common.get_wall_clock()
         for gltf_image in gltf_asset.images {
             bufferview := gltf_asset.bufferViews[gltf_image.bufferView]
-            pointer := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset:]
-            image: ^img.Image
-            error: img.Error
-            switch gltf_image.mimeType {
-                case "image/jpeg":
-                    image, error = jpeg.load_from_bytes(pointer)
-                case "image/png":
-                    image, error = png.load_from_bytes(pointer)
-                case:
-                    log.warn("Skipping unknown image mime type", gltf_image.mimeType)
-                    continue
-            }
+            image_memory := gltf_asset.buffers[bufferview.buffer].memory[bufferview.byteOffset:]
             texture := add_texture(manager)
-            texture.image = image
+            pixels := stbi.load_from_memory(
+                raw_data(image_memory),
+                i32(bufferview.byteLength),
+                &texture.width,
+                &texture.height,
+                &texture.channels,
+                0
+            )
+            pixels_size := texture.width * texture.height * texture.channels
+            texture.pixels = make([]byte, pixels_size)
+            copy(texture.pixels, pixels[:pixels_size])
+            stbi.image_free(pixels)
             append(&textures, texture.id)
         }
         end_textures := common.get_wall_clock()
@@ -442,7 +440,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
         start_meshes := common.get_wall_clock()
         for gltf_mesh in gltf_asset.meshes {
             mesh := add_mesh(manager)
-            mesh.name = strings.clone(mesh.name)
+            mesh.name = strings.clone(gltf_mesh.name)
             mesh.primitives = make([]Primitive, len(gltf_mesh.primitives))
     
             for gltf_primitive, primitive_index in gltf_mesh.primitives {

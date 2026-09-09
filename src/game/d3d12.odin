@@ -740,26 +740,15 @@ create_texture :: proc(
     srv_handle: ^d3d12.CPU_DESCRIPTOR_HANDLE,
 ) -> d3d12.RESOURCE_BARRIER {
     format: dxgi.FORMAT
-    switch texture.image.depth {
-        case 8:
-            switch texture.image.channels {
-                case 1:    format = .R8_UNORM
-                case 2:    format = .R8G8_UNORM
-                case 3, 4: format = .R8G8B8A8_UNORM
-            }
-        case 16:
-            switch texture.image.channels {
-                case 1:    format = .R16_UNORM
-                case 2:    format = .R16G16_UNORM
-                case 3, 4: format = .R16G16B16A16_UNORM
-            }
-        case:
-            log.fatal("Unsupported pixel bit depth:", texture.image.depth)
+    switch texture.channels {
+        case 1:    format = .R8_UNORM
+        case 2:    format = .R8G8_UNORM
+        case 3, 4: format = .R8G8B8A8_UNORM
     }
     texture_desc := d3d12.RESOURCE_DESC{
         Dimension = .TEXTURE2D,
-        Width = u64(texture.image.width),
-        Height = u32(texture.image.height),
+        Width = u64(texture.width),
+        Height = u32(texture.height),
         DepthOrArraySize = 1,
         MipLevels = 1,
         Format = format,
@@ -788,17 +777,16 @@ create_texture :: proc(
 
     upload_buffer, mapped_memory := create_mapped_buffer(renderer.device, u32(upload_buffer_size))
     dst_mem := ([^]byte)(mapped_memory)
-    src_mem := texture.image.pixels.buf[:]
-    src_pitch := texture.image.width * texture.image.channels * texture.image.depth / 8
+    src_mem := texture.pixels
+    src_pitch := texture.width * texture.channels
 
-    if texture.image.channels == 3 {
-        pixel_bytes := asset.get_bytes_per_pixel(texture.image)
+    if texture.channels == 3 {
         for row in 0..<n_rows {
             row_dst := dst_mem
-            for col in 0..<texture.image.height {
-                copy(row_dst[:pixel_bytes], src_mem[:pixel_bytes])
-                row_dst = row_dst[4 * texture.image.depth / 8:]
-                src_mem = src_mem[pixel_bytes:]
+            for col in 0..<texture.height {
+                copy(row_dst[:3], src_mem[:3])
+                row_dst = row_dst[4:]
+                src_mem = src_mem[3:]
             }
             dst_mem = dst_mem[subresource_footprint.Footprint.RowPitch:]
         }

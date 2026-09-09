@@ -1,58 +1,48 @@
 package asset
 
-import "core:mem"
-import "core:slice"
-import "core:bytes"
-import img "core:image"
-
 
 Texture :: struct {
     id:        ID,
-    image:     ^img.Image,
+    width:     i32,
+    height:    i32,
+    channels:  i32,
+    pixels:    []byte,
     link:      ^Texture,
 }
 
-get_bytes_per_pixel :: proc(image: ^img.Image) -> int {
-    return image.channels * image.depth / 8
+get_serialized_size_texture :: proc(texture: ^Texture) -> int {
+    return 3 * size_of(i32) + get_serialized_size_slice(texture.pixels)
 }
 
-get_serialized_size_image :: proc(image: ^img.Image) -> int {
-    return 4 * size_of(int) + image.width * image.height * get_bytes_per_pixel(image)
-}
-
-serialize_image :: proc(memory: []byte, image: ^img.Image) -> (size: int) {
-    dump_to_memory(memory, image.width)
-    block := memory[size_of(int):]
-    size += size_of(int)
-    dump_to_memory(block, image.height)
-    block = block[size_of(int):]
-    size += size_of(int)
-    dump_to_memory(block, image.channels)
-    block = block[size_of(int):]
-    size += size_of(int)
-    dump_to_memory(block, image.depth)
-    block = block[size_of(int):]
-    size += size_of(int)
-    
-    pixels_size := image.width * image.height * get_bytes_per_pixel(image)
-    copy(block[:pixels_size], image.pixels.buf[:])
-    size += pixels_size
+serialize_texture :: proc(memory: []byte, texture: ^Texture) -> (size: int) {
+    dump_to_memory(memory, texture.width)
+    block := memory[size_of(i32):]
+    size += size_of(i32)
+    dump_to_memory(block, texture.height)
+    block = block[size_of(i32):]
+    size += size_of(i32)
+    dump_to_memory(block, texture.channels)
+    block = block[size_of(i32):]
+    size += size_of(i32)
+    size += serialize_slice(memory, texture.pixels)
 
     return
 }
 
-deserialize_image :: proc(memory: []byte) -> (^img.Image, int) {
-    result := new(img.Image)
-    header := slice.reinterpret([]int, memory[:4*size_of(int)])
-    result^ = {
-        width    = header[0],
-        height   = header[1],
-        channels = header[2],
-        depth    = header[3],
-    }
-    block := memory[4*size_of(int):]
-    pixels_size := result.width * result.height * get_bytes_per_pixel(result)
-    bytes.buffer_init(&result.pixels, block[:pixels_size])
+deserialize_texture :: proc(texture: ^Texture, memory: []byte) -> (size: int) {
+    texture.width = extract_from_memory(memory, i32)
+    block := memory[size_of(i32):]
+    size += size_of(i32)
+    texture.height = extract_from_memory(memory, i32)
+    block = memory[size_of(i32):]
+    size += size_of(i32)
+    texture.channels = extract_from_memory(memory, i32)
+    block = memory[size_of(i32):]
+    size += size_of(i32)
 
-    return result, get_serialized_size_image(result)
+    pixels_size: int
+    texture.pixels, pixels_size = deserialize_slice(memory, []byte)
+    size += pixels_size
+    
+    return 
 }

@@ -5,9 +5,7 @@ import "core:log"
 import "core:time"
 import "core:slice"
 import "core:container/pool"
-import img "core:image"
-import "core:image/png"
-import "core:image/jpeg"
+import stbi "vendor:stb/image"
 
 
 ID :: distinct u32
@@ -111,12 +109,11 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
                     delete(import_textures)
                     delete(import_skeletons)
                 case "jpeg", "png":
-                    image, error := png.load_from_file(import_file)
-                    if error != nil {
-                        log.error("Failed to load image", import_file)
-                    }
                     texture := add_texture(manager)
-                    texture.image = image
+                    pixels := stbi.load(cstring(raw_data(import_file)), &texture.width, &texture.height, &texture.channels, 0)
+                    texture.pixels = make([]byte, texture.width * texture.height * texture.channels)
+                    copy(texture.pixels, pixels[:len(texture.pixels)])
+                    stbi.image_free(pixels)
                     append(&textures, texture.id)
                 case "wav":
                     log.error("Asset file loading with extension", ext, "hasn't been implemented yet")
@@ -218,9 +215,9 @@ write :: proc(manager: ^Manager, asset: ^Asset) {
     for id, index in asset.textures {
         texture := get_texture(manager, id)
         if texture == nil {
-            log.error("Failed to find asset texture with ID", id, "when writing asset file.")
+            log.error("Failed to find asset texture with ID ", id, " when writing asset file ", asset.path, ".", sep="")
         }
-        total_size += get_serialized_size_image(texture.image)
+        total_size += get_serialized_size_texture(texture)
         texture_id_to_index[id] = u32(index+1)
     }
 
@@ -260,7 +257,7 @@ write :: proc(manager: ^Manager, asset: ^Asset) {
 
     for id in asset.textures {
         texture := get_texture(manager, id)
-        size := serialize_image(block, texture.image)
+        size := serialize_texture(block, texture)
         block = block[size:]
     }
 
@@ -309,8 +306,7 @@ load :: proc(manager: ^Manager, asset: ^Asset, path: string) {
     for &id in asset.textures {
         texture := add_texture(manager)
         id = texture.id
-        image, size := deserialize_image(block)
-        texture.image = image
+        size := deserialize_texture(texture, block)
         block = block[size:]
     }
 
@@ -347,7 +343,7 @@ release :: proc(manager: ^Manager, asset: ^Asset) {
     // Textures
     for id in asset.textures {
         texture := get_texture(manager, id)
-        img.destroy(texture.image)
+        delete(texture.pixels)
     }
 }
 
