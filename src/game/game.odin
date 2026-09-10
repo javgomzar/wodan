@@ -95,8 +95,8 @@ update_game_state :: proc(memory: ^Game_Memory) {
         transform := parent_transform * bone.local_bind
         if bone.parent != -1 {
             parent := skeleton.joints[bone.parent]
-            start := 0.009999999776482582 * [3]f32{transform[0, 3], -transform[2, 3], -transform[1, 3]}
-            end := 0.009999999776482582 * [3]f32{parent_transform[0, 3], -parent_transform[2, 3], -parent_transform[1, 3]}
+            start := [3]f32{transform[0, 3], transform[1, 3], transform[2, 3]}
+            end := [3]f32{parent_transform[0, 3], parent_transform[1, 3], parent_transform[2, 3]}
             push_segment_world(render_group, start, end, color = Color[.Red])
         }
     }

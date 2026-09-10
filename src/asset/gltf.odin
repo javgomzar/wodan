@@ -400,17 +400,17 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
 
                 joint_rotation: linalg.Quaternionf32 = global_rotation
                 if rotation, ok := gltf_joint.rotation.?; ok {
-                    joint_rotation *= quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3])
+                    joint_rotation *= quaternion(x=-rotation[0], y=rotation[2], z=rotation[1], w=rotation[3])
                 }
 
                 joint_translation: [3]f32 = global_translation
                 if translation, ok := gltf_joint.translation.?; ok {
-                    joint_translation += translation
+                    joint_translation += {translation.x, -translation.z, -translation.y}
                 }
 
                 joint_scale: [3]f32 = global_scale
                 if scale, ok := gltf_joint.scale.?; ok {
-                    joint_scale *= scale
+                    joint_scale *= {scale.x, scale.z, scale.y}
                 }
 
                 transform := linalg.matrix4_from_trs_f32(joint_translation, joint_rotation, joint_scale)
