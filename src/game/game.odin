@@ -83,23 +83,7 @@ update_game_state :: proc(memory: ^Game_Memory) {
     push_mesh(render_group, body, .Mesh, scale = {1, 1, -1})
 
     skeleton_id := asset_manager.catalog.animation.skeletons[0]
-    skeleton := asset.get_skeleton(asset_manager, skeleton_id)
-    for bone in skeleton.joints {
-        parent_transform: matrix[4, 4]f32 = 1
-        parent_id := bone.parent
-        for parent_id != -1 {
-            parent := skeleton.joints[parent_id]
-            parent_transform = parent.local_bind * parent_transform
-            parent_id = parent.parent
-        }
-        transform := parent_transform * bone.local_bind
-        if bone.parent != -1 {
-            parent := skeleton.joints[bone.parent]
-            start := [3]f32{transform[0, 3], transform[1, 3], transform[2, 3]}
-            end := [3]f32{parent_transform[0, 3], parent_transform[1, 3], parent_transform[2, 3]}
-            push_segment_world(render_group, start, end, color = Color[.Red])
-        }
-    }
+    push_debug_skeleton(render_group, skeleton_id)
 
     send_render_text_commands(render_group)
     render(memory)

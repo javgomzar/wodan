@@ -257,20 +257,25 @@ push_segment_world :: proc(
 push_debug_skeleton :: proc(group: ^Render_Group, skeleton: asset.ID) {
     skeleton := asset.get_skeleton(group.asset_manager, skeleton)
     if skeleton != nil {
-        for bone in skeleton.joints {
-            if bone.parent != -1 {
-                parent := skeleton.joints[bone.parent]
-                entry := add_entry(group,
-                    .Line,
-                    .Debug_Skeleton,
-                    dynamic_buffer = true,
-                    material = asset.get_default_material(Color[.Red]),
-                )
+        n_segments := len(skeleton.joints) - 1
+        entry := add_entry(group, .Line, .Debug_Skeleton, true, material = asset.get_default_material(Color[.Red]))
+        entry.positions = asset.push_vertices(&group.positions, 2 * n_segments)
 
-                entry.positions = asset.push_vertices(&group.positions, 2)
-                vertices := entry.positions.memory
-                vertices[0] = {bone.global_bind[0, 3], bone.global_bind[1, 3], bone.global_bind[2, 3]}
-                vertices[1] = {parent.global_bind[0, 3], parent.global_bind[1, 3], parent.global_bind[2, 3]}
+        current_index := 0
+        for bone in skeleton.joints {
+            parent_transform: matrix[4, 4]f32 = 1
+            parent_id := bone.parent
+            if bone.parent != -1 {
+                for parent_id != -1 {
+                    parent := skeleton.joints[parent_id]
+                    parent_transform = parent.local_bind * parent_transform
+                    parent_id = parent.parent
+                }
+                transform := parent_transform * bone.local_bind
+                parent := skeleton.joints[bone.parent]
+                entry.positions.memory[2*current_index] = {transform[0, 3], transform[1, 3], transform[2, 3]}
+                entry.positions.memory[2*current_index + 1] = {parent_transform[0, 3], parent_transform[1, 3], parent_transform[2, 3]}
+                current_index += 1
             }
         }
     }
