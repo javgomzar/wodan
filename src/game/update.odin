@@ -13,9 +13,15 @@ normalize_angle :: proc(angle: f32) -> f32 {
 update_camera :: proc(camera: ^Camera, input: ^common.Input_Context) {
     delta := input.mouse.cursor - input.mouse.last_cursor
     
-    if (input.mouse.middle_click.is_down) {
+    if input.mouse.middle_click.is_down {
         camera.angle -= 0.5 * delta.x;
         camera.pitch += 0.5 * delta.y;
+    }
+    else {
+        if input.keyboard.key[.Up].is_down    do camera.pitch += 0.75
+        if input.keyboard.key[.Down].is_down  do camera.pitch -= 0.75
+        if input.keyboard.key[.Left].is_down  do camera.angle += 0.75
+        if input.keyboard.key[.Right].is_down do camera.angle -= 0.75
     }
 
     if input.mouse.wheel > 0      do camera.distance /= 1.2
