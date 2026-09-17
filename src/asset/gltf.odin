@@ -424,7 +424,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
 
                 joint_translation: [3]f32 = {0, 0, 0}
                 if translation, ok := gltf_joint.translation.?; ok {
-                    joint_translation = {translation.x, -translation.z, -translation.y}
+                    joint_translation = global_scale * {translation.x, -translation.z, -translation.y}
                 }
 
                 joint_scale: [3]f32 = {1, 1, 1}
