@@ -437,12 +437,22 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
             }
 
             for &joint, index in skeleton.joints {
+                // Inverse bind
                 for i in 0..<4 {
                     for j in 0..<4 {
                         joint.inverse_bind[i, j] = matrices[4*i + j]
                     }
                 }
                 matrices = matrices[16:]
+
+                // Rest pose
+                joint.global_bind = joint.local_bind
+                parent_id := joint.parent
+                for parent_id != -1 {
+                    parent := skeleton.joints[parent_id]
+                    joint.global_bind = parent.local_bind * joint.global_bind
+                    parent_id = parent.parent
+                }
             }
         }
 

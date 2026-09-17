@@ -262,18 +262,10 @@ push_debug_skeleton :: proc(group: ^Render_Group, skeleton: asset.ID) {
         entry.positions = asset.push_vertices(&group.positions, 2 * n_segments)
 
         current_index := 0
-        for bone in skeleton.joints {
-            parent_transform: matrix[4, 4]f32 = 1
-            parent_id := bone.parent
+        for bone, index in skeleton.joints {
             if bone.parent != -1 {
-                for parent_id != -1 {
-                    parent := skeleton.joints[parent_id]
-                    parent_transform = parent.local_bind * parent_transform
-                    parent_id = parent.parent
-                }
-                transform := parent_transform * bone.local_bind
-                parent := skeleton.joints[bone.parent]
-                entry.positions.memory[2*current_index] = {transform[0, 3], transform[1, 3], transform[2, 3]}
+                parent_transform := skeleton.joints[bone.parent].global_bind
+                entry.positions.memory[2*current_index] = {bone.global_bind[0, 3], bone.global_bind[1, 3], bone.global_bind[2, 3]}
                 entry.positions.memory[2*current_index + 1] = {parent_transform[0, 3], parent_transform[1, 3], parent_transform[2, 3]}
                 current_index += 1
             }
