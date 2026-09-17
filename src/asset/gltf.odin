@@ -3,6 +3,7 @@ package asset
 import "core:os"
 import "core:log"
 import "core:strings"
+import "core:slice"
 import "core:math/linalg"
 import vmem "core:mem/virtual"
 import "core:encoding/json"
@@ -385,6 +386,24 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
             global_translation := [3]f32{0, 0, 0}
             global_rotation: linalg.Quaternionf32 = 1
             global_scale := [3]f32{1, 1, 1}
+            for node in gltf_asset.nodes {
+                children, ok := node.children.?
+                if ok && slice.contains(children, root_joints[0]) {
+                    if translation, ok := node.translation.?; ok {
+                        global_translation = {translation.x, -translation.z, -translation.y}
+                    }
+
+                    if rotation, ok := node.rotation.?; ok {
+                        global_rotation = quaternion(x = -rotation[0], y = rotation[2], z = rotation[1], w = rotation[3])
+                    }
+
+                    if scale, ok := node.scale.?; ok {
+                        global_scale = {scale.x, scale.z, scale.y}
+                    }
+
+                    break
+                }
+            }
 
             accessor := gltf_asset.accessors[skin.inverseBindMatrices]
             assert(accessor.componentType == .F32 && accessor.type == "MAT4" && accessor.count == len(skin.joints))
@@ -398,19 +417,19 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 joint.name = strings.clone(gltf_joint.name)
                 joint.id = Joint_ID(joint_index)
 
-                joint_rotation: linalg.Quaternionf32 = global_rotation
+                joint_rotation: linalg.Quaternionf32 = 1
                 if rotation, ok := gltf_joint.rotation.?; ok {
-                    joint_rotation *= quaternion(x=-rotation[0], y=rotation[2], z=rotation[1], w=rotation[3])
+                    joint_rotation = quaternion(x=-rotation[0], y=rotation[2], z=rotation[1], w=rotation[3])
                 }
 
-                joint_translation: [3]f32 = global_translation
+                joint_translation: [3]f32 = {0, 0, 0}
                 if translation, ok := gltf_joint.translation.?; ok {
-                    joint_translation += {translation.x, -translation.z, -translation.y}
+                    joint_translation = {translation.x, -translation.z, -translation.y}
                 }
 
-                joint_scale: [3]f32 = global_scale
+                joint_scale: [3]f32 = {1, 1, 1}
                 if scale, ok := gltf_joint.scale.?; ok {
-                    joint_scale *= {scale.x, scale.z, scale.y}
+                    joint_scale = {scale.x, scale.z, scale.y}
                 }
 
                 transform := linalg.matrix4_from_trs_f32(joint_translation, joint_rotation, joint_scale)
