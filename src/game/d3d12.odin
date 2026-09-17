@@ -211,6 +211,8 @@ initialize_renderer :: proc(
     renderer: ^Renderer_Context,
     render_group: ^Render_Group,
 ) {
+    start := common.get_wall_clock()
+
     hr: w32.HRESULT
     renderer.window = w32.GetActiveWindow()
 
@@ -732,6 +734,9 @@ initialize_renderer :: proc(
     }
 
     renderer.frame = 0
+
+    end := common.get_wall_clock()
+    log.info("Renderer initialized in", 1000.0 * common.get_seconds_elapsed(start, end), "milliseconds.")
 }
 
 create_texture :: proc(
