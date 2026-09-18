@@ -390,15 +390,15 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 children, ok := node.children.?
                 if ok && slice.contains(children, root_joints[0]) {
                     if translation, ok := node.translation.?; ok {
-                        global_translation = {translation.x, -translation.z, -translation.y}
+                        global_translation = {translation.x, translation.y, translation.z}
                     }
 
                     if rotation, ok := node.rotation.?; ok {
-                        global_rotation = quaternion(x = -rotation[0], y = rotation[2], z = rotation[1], w = rotation[3])
+                        global_rotation = quaternion(x = rotation[0], y = rotation[1], z = rotation[2], w = rotation[3])
                     }
 
                     if scale, ok := node.scale.?; ok {
-                        global_scale = {scale.x, scale.z, scale.y}
+                        global_scale = {scale.x, scale.y, scale.z}
                     }
 
                     break
@@ -419,17 +419,17 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
 
                 joint_rotation: linalg.Quaternionf32 = 1
                 if rotation, ok := gltf_joint.rotation.?; ok {
-                    joint_rotation = quaternion(x=-rotation[0], y=rotation[2], z=rotation[1], w=rotation[3])
+                    joint_rotation = quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3])
                 }
 
                 joint_translation: [3]f32 = {0, 0, 0}
                 if translation, ok := gltf_joint.translation.?; ok {
-                    joint_translation = global_scale * {translation.x, -translation.z, -translation.y}
+                    joint_translation = global_scale * ({translation.x, translation.y, translation.z} + global_translation)
                 }
 
                 joint_scale: [3]f32 = {1, 1, 1}
                 if scale, ok := gltf_joint.scale.?; ok {
-                    joint_scale = {scale.x, scale.z, scale.y}
+                    joint_scale = {scale.x, scale.y, scale.z}
                 }
 
                 transform := linalg.matrix4_from_trs_f32(joint_translation, joint_rotation, joint_scale)
@@ -453,6 +453,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                     joint.global_bind = parent.local_bind * joint.global_bind
                     parent_id = parent.parent
                 }
+                joint.global_bind = linalg.matrix4_from_quaternion(global_rotation) * joint.global_bind
             }
         }
 
