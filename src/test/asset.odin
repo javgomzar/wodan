@@ -40,6 +40,28 @@ test_serialization_slice :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_serialization_matrix :: proc(t: ^testing.T) {
+    mat: matrix[4,6]f32 = {
+        1, 2, 3, 4, 5, 6,
+       -1,-2,-3,-4,-5,-6,
+        0,-0, 9, 9, 9, 1E-60,
+        9, 9, 9, 9, 9, 1E60,
+    }
+
+    expected_size := asset.get_serialized_size_matrix(mat)
+    memory := make([]byte, expected_size)
+    defer delete(memory)
+    
+    bytes_written := asset.serialize_matrix(memory, mat)
+    testing.expect(t, expected_size == bytes_written)
+    
+    loaded_mat: matrix[4,6]f32
+    loaded_size := asset.deserialize_matrix(&loaded_mat, memory)
+    testing.expect(t, loaded_size == expected_size)
+    testing.expect(t, mat == loaded_mat)
+}
+
+@(test)
 test_serialization_material :: proc(t: ^testing.T) {
     material: asset.Material = asset.default_material
     material.name = "Test"

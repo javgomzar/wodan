@@ -70,3 +70,35 @@ widen_to_u32 :: proc(out: []u32, src: [^]$T, count: int) {
         out[i] = u32(src[i])
     }
 }
+
+get_serialized_size_matrix :: proc(mat: $M/matrix[$R, $C]f32) -> int {
+    return R * C * size_of(f32)
+}
+
+serialize_matrix :: proc(memory: []byte, mat: $M/matrix[$R, $C]f32) -> (size: int) {
+    block := memory
+
+    for i in 0..<R {
+        for j in 0..<C {
+            dump_to_memory(block, mat[i, j])
+            size += size_of(f32)
+            block = block[size_of(f32):]
+        }
+    }
+
+    return
+}
+
+deserialize_matrix :: proc(mat: ^$M/matrix[$R, $C]f32, memory: []byte) -> (size: int) {
+    block := memory
+
+    for i in 0..<R {
+        for j in 0..<C {
+            mat[i, j] = extract_from_memory(block, f32)
+            size += size_of(f32)
+            block = block[size_of(f32):]
+        }
+    }
+
+    return
+}
