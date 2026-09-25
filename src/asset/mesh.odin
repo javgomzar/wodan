@@ -1,6 +1,8 @@
 package asset
 
+import "core:log"
 import "core:slice"
+import "core:container/pool"
 
 
 Topology :: enum u32 {
@@ -27,6 +29,21 @@ Material :: struct {
         specular: ID,
     },
     link: ^Material,
+}
+
+add_material :: proc(manager: ^Manager) -> ^Material {
+    material, error := pool.get(&manager.pools.material)
+    if error != nil do log.fatal("Failed to allocate material asset.")
+    material.id = create_id(manager)
+    manager.items.material[material.id] = material
+    return material
+}
+
+get_material :: proc(manager: ^Manager, id: ID) -> ^Material {
+    if id in manager.items.material {
+        return manager.items.material[id]
+    }
+    return nil
 }
 
 default_material := Material{
@@ -255,6 +272,21 @@ Mesh :: struct {
     primitives: []Primitive,
 }
 
+add_mesh :: proc(manager: ^Manager) -> ^Mesh {
+    mesh, error := pool.get(&manager.pools.mesh)
+    if error != nil do log.fatal("Failed to allocate mesh asset.")
+    mesh.id = create_id(manager)
+    manager.items.mesh[mesh.id] = mesh
+    return mesh
+}
+
+get_mesh :: proc(manager: ^Manager, id: ID) -> ^Mesh {
+    if id in manager.items.mesh {
+        return manager.items.mesh[id]
+    }
+    return nil
+}
+
 get_serialized_size_mesh :: proc(mesh: ^Mesh) -> (size: int) {
     size += get_serialized_size_string(mesh.name)
     size += 4 // primitive count (u32)
@@ -308,22 +340,4 @@ release_mesh :: proc(mesh: ^Mesh) {
         if len(primitive.joints) > 0     do delete(primitive.joints)
     }
     delete(mesh.primitives)
-}
-
-Joint_ID :: distinct i32
-
-Joint :: struct {
-    id:           Joint_ID,
-    name:         string,
-    parent:       Joint_ID,
-    inverse_bind: matrix[4, 4]f32,
-    local_bind:   matrix[4, 4]f32,
-    global_bind:  matrix[4, 4]f32,
-}
-
-Skeleton :: struct {
-    id:         ID,
-    joints:     []Joint,
-    root_joint: Joint_ID,
-    link:       ^Skeleton,
 }

@@ -141,66 +141,6 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
     }
 }
 
-add_mesh :: proc(manager: ^Manager) -> ^Mesh {
-    mesh, error := pool.get(&manager.pools.mesh)
-    if error != nil do log.fatal("Failed to allocate mesh asset.")
-    mesh.id = create_id(manager)
-    manager.items.mesh[mesh.id] = mesh
-    return mesh
-}
-
-get_mesh :: proc(manager: ^Manager, id: ID) -> ^Mesh {
-    if id in manager.items.mesh {
-        return manager.items.mesh[id]
-    }
-    return nil
-}
-
-add_texture :: proc(manager: ^Manager) -> ^Texture {
-    texture, error := pool.get(&manager.pools.texture)
-    if error != nil do log.fatal("Failed to allocate texture asset.")
-    texture.id = create_id(manager)
-    manager.items.texture[texture.id] = texture
-    return texture
-}
-
-get_texture :: proc(manager: ^Manager, id: ID) -> ^Texture {
-    if id in manager.items.texture {
-        return manager.items.texture[id]
-    }
-    return nil
-}
-
-add_material :: proc(manager: ^Manager) -> ^Material {
-    material, error := pool.get(&manager.pools.material)
-    if error != nil do log.fatal("Failed to allocate material asset.")
-    material.id = create_id(manager)
-    manager.items.material[material.id] = material
-    return material
-}
-
-get_material :: proc(manager: ^Manager, id: ID) -> ^Material {
-    if id in manager.items.material {
-        return manager.items.material[id]
-    }
-    return nil
-}
-
-add_skeleton :: proc(manager: ^Manager) -> ^Skeleton {
-    skeleton, error := pool.get(&manager.pools.skeleton)
-    if error != nil do log.fatal("Failed to allocate skeleton asset.")
-    skeleton.id = create_id(manager)
-    manager.items.skeleton[skeleton.id] = skeleton
-    return skeleton
-}
-
-get_skeleton :: proc(manager: ^Manager, id: ID) -> ^Skeleton {
-    if id in manager.items.skeleton {
-        return manager.items.skeleton[id]
-    }
-    return nil
-}
-
 write :: proc(manager: ^Manager, asset: ^Asset) {
     total_size := size_of(File_Header)
 

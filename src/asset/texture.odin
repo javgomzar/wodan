@@ -1,5 +1,8 @@
 package asset
 
+import "core:log"
+import "core:container/pool"
+
 
 Texture :: struct {
     id:        ID,
@@ -8,6 +11,21 @@ Texture :: struct {
     channels:  i32,
     pixels:    []byte,
     link:      ^Texture,
+}
+
+add_texture :: proc(manager: ^Manager) -> ^Texture {
+    texture, error := pool.get(&manager.pools.texture)
+    if error != nil do log.fatal("Failed to allocate texture asset.")
+    texture.id = create_id(manager)
+    manager.items.texture[texture.id] = texture
+    return texture
+}
+
+get_texture :: proc(manager: ^Manager, id: ID) -> ^Texture {
+    if id in manager.items.texture {
+        return manager.items.texture[id]
+    }
+    return nil
 }
 
 get_serialized_size_texture :: proc(texture: ^Texture) -> int {
