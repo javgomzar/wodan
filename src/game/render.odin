@@ -189,7 +189,7 @@ initialize_render_group :: proc(group: ^Render_Group, asset_manager: ^asset.Mana
 
     group.light = {
         color = { 1.0, 1.0, 1.0, },
-        direction = linalg.normalize([3]f32{ -0.5, -1, 1 }),
+        direction = linalg.normalize([3]f32{ -0.5, -1, -1 }),
         ambient = 0.5,
         diffuse = 0.5,
     }
@@ -254,21 +254,18 @@ push_segment_world :: proc(
     vertices[1] = {end.x, end.y, end.z}
 }
 
-push_debug_skeleton :: proc(group: ^Render_Group, skeleton: asset.ID) {
-    skeleton := asset.get_skeleton(group.asset_manager, skeleton)
-    if skeleton != nil {
-        n_segments := len(skeleton.joints) - 1
-        entry := add_entry(group, .Line, .Debug_Skeleton, true, material = asset.get_default_material(Color[.Red]))
-        entry.positions = asset.push_vertices(&group.positions, 2 * n_segments)
+push_debug_skeleton :: proc(group: ^Render_Group, skeleton: ^asset.Skeleton) {
+    n_segments := len(skeleton.joints) - 1
+    entry := add_entry(group, .Line, .Debug_Skeleton, true, material = asset.get_default_material(Color[.Red]))
+    entry.positions = asset.push_vertices(&group.positions, 2 * n_segments)
 
-        current_index := 0
-        for bone, index in skeleton.joints {
-            if bone.parent != -1 {
-                parent_transform := skeleton.joints[bone.parent].global_bind
-                entry.positions.memory[2*current_index] = {bone.global_bind[0, 3], bone.global_bind[1, 3], -bone.global_bind[2, 3]}
-                entry.positions.memory[2*current_index + 1] = {parent_transform[0, 3], parent_transform[1, 3], -parent_transform[2, 3]}
-                current_index += 1
-            }
+    current_index := 0
+    for bone, index in skeleton.joints {
+        if bone.parent != -1 {
+            parent := skeleton.joints[bone.parent]
+            entry.positions.memory[2*current_index] = {bone.rest_pose[0, 3], bone.rest_pose[1, 3], bone.rest_pose[2, 3]}
+            entry.positions.memory[2*current_index + 1] = {parent.rest_pose[0, 3], parent.rest_pose[1, 3], parent.rest_pose[2, 3]}
+            current_index += 1
         }
     }
 }
@@ -392,7 +389,7 @@ push_circle :: proc(
 
 push_mesh :: proc(
     group:       ^Render_Group,
-    mesh_id:     asset.ID,
+    mesh:        ^asset.Mesh,
     pipeline:    Shader_Pipeline_ID,
     color:       [4]f32 = {1, 1, 1, 1},
     translation: linalg.Vector3f32 = 0,
@@ -400,8 +397,6 @@ push_mesh :: proc(
     scale:       linalg.Vector3f32 = 1,
     outline:     bool = false,
 ) {
-    mesh := asset.get_mesh(group.asset_manager, mesh_id)
-    if mesh == nil do log.fatal("Failed to find mesh with ID", mesh_id)
     for primitive in mesh.primitives {
         material: asset.Material
         primitive_material := asset.get_material(group.asset_manager, primitive.material)

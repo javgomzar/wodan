@@ -10,19 +10,20 @@ import "../common"
 
 
 Game_Memory :: struct {
-    input:         common.Input_Context,
-    ui_context:    UI_Context,
-    renderer:      Renderer_Context,
-    render_group:  Render_Group,
-    asset_manager: asset.Manager,
-    code:          Game_Code,
-    time_records:  [common.Time_Record_ID]common.Time_Record,
-    time:          f32,
-    delta_time:    f32,
-    initialized:   bool,
-    running:       bool,
-    testing:       bool,
-    debug:         bool,
+    input:          common.Input_Context,
+    ui_context:     UI_Context,
+    renderer:       Renderer_Context,
+    render_group:   Render_Group,
+    asset_manager:  asset.Manager,
+    entity_manager: Entity_Manager,
+    code:           Game_Code,
+    time_records:   [common.Time_Record_ID]common.Time_Record,
+    time:           f32,
+    delta_time:     f32,
+    initialized:    bool,
+    running:        bool,
+    testing:        bool,
+    debug:          bool,
 }
 
 Game_Code :: struct {

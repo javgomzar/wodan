@@ -416,6 +416,9 @@ compute_layout :: proc() {
 }
 
 update_ui :: proc(memory: ^Game_Memory) {
+    timer := common.start_timer(.UI)
+    defer common.end_timer(timer)
+    
     render_group := &memory.render_group
     ui_context.frame = memory.renderer.frame
 

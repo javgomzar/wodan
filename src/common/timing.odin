@@ -3,6 +3,8 @@ package common
 
 Time_Record_ID :: enum {
     Rendering,
+    UI,
+    Update_Entities,
 }
 
 Time_Record :: struct {
