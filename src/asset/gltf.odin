@@ -2,11 +2,11 @@ package asset
 
 import "core:os"
 import "core:log"
-import "core:strings"
 import "core:slice"
+import "core:strings"
 import "core:math/linalg"
-import vmem "core:mem/virtual"
 import "core:encoding/json"
+import vmem "core:mem/virtual"
 import stbi "vendor:stb/image"
 import "../common"
 
@@ -329,21 +329,25 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
     }
 
     if len(gltf_asset.animations) > 0 {
+        // Keeping track of joint nodes for each skeleton
+        skeleton_node_to_index := make([]map[int]Joint_ID, len(gltf_asset.skins))
+        defer delete(skeleton_node_to_index)
+
         // Load skins
-        for skin in gltf_asset.skins {
+        for skin, skin_index in gltf_asset.skins {
             skeleton := add_skeleton(manager)
             skeleton.joints = make([]Joint, len(skin.joints))
             defer append(&skeletons, skeleton.id)
 
-            node_index_to_joint_index := make(map[int]Joint_ID)
-            defer delete(node_index_to_joint_index)
+            skeleton_node_to_index[skin_index] = make(map[int]Joint_ID)
+            node_to_index := &skeleton_node_to_index[skin_index]
 
             // Build map node_index -> joint_index
             for node_index, joint_index in skin.joints {
                 joint := &skeleton.joints[joint_index]
                 joint.id = Joint_ID(joint_index)
                 joint.parent = -1
-                node_index_to_joint_index[node_index] = joint.id
+                node_to_index[node_index] = joint.id
             }
             
             // Build hierarchy
@@ -354,7 +358,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
 
                 if children, ok := gltf_joint.children.?; ok {
                     for child in children {
-                        child_joint := &skeleton.joints[node_index_to_joint_index[child]]
+                        child_joint := &skeleton.joints[node_to_index[child]]
                         child_joint.parent = joint.id
                     }
                 }
@@ -363,7 +367,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
             root_joints := make([dynamic]int)
             defer delete(root_joints)
             if root, ok := skin.skeleton.?; ok {
-                if root not_in node_index_to_joint_index {
+                if root not_in node_to_index {
                     log.fatal("GLTF: Root joint is not in the skin joints.")
                 }
                 append(&root_joints, root)
@@ -371,7 +375,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
             else {
                 for joint in skeleton.joints {
                     if joint.parent == -1 {
-                        for node_id, joint_id in node_index_to_joint_index {
+                        for node_id, joint_id in node_to_index {
                             if joint.id == joint_id {
                                 append(&root_joints, node_id)
                             }
@@ -380,7 +384,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 }
             }
             assert(len(root_joints) == 1, "More than one root joint present")
-            skeleton.root_joint = node_index_to_joint_index[root_joints[0]]
+            skeleton.root_joint = node_to_index[root_joints[0]]
 
             // Global transform for the skeleton
             global_translation := [3]f32{0, 0, 0}
@@ -417,23 +421,20 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 joint.name = strings.clone(gltf_joint.name)
                 joint.id = Joint_ID(joint_index)
 
-                joint_rotation: linalg.Quaternionf32 = 1
+                joint.local_pose.rotation = 1
                 if rotation, ok := gltf_joint.rotation.?; ok {
-                    joint_rotation = quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3])
+                    joint.local_pose.rotation = quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3])
                 }
 
-                joint_translation: [3]f32 = {0, 0, 0}
+                joint.local_pose.translation = {0, 0, 0}
                 if translation, ok := gltf_joint.translation.?; ok {
-                    joint_translation = global_scale * ({translation.x, translation.y, translation.z} + global_translation)
+                    joint.local_pose.translation = translation
                 }
 
-                joint_scale: [3]f32 = {1, 1, 1}
+                joint.local_pose.scale = {1, 1, 1}
                 if scale, ok := gltf_joint.scale.?; ok {
-                    joint_scale = {scale.x, scale.y, scale.z}
+                    joint.local_pose.scale = {scale.x, scale.y, scale.z}
                 }
-
-                transform := linalg.matrix4_from_trs_f32(joint_translation, joint_rotation, joint_scale)
-                joint.local_bind = transform
             }
 
             for &joint, index in skeleton.joints {
@@ -446,22 +447,110 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 matrices = matrices[16:]
 
                 // Rest pose
-                joint.global_bind = joint.local_bind
+                joint.rest_pose = linalg.matrix4_from_trs_f32(
+                    joint.local_pose.translation, 
+                    joint.local_pose.rotation, 
+                    joint.local_pose.scale
+                )
                 parent_id := joint.parent
                 for parent_id != -1 {
                     parent := skeleton.joints[parent_id]
-                    joint.global_bind = parent.local_bind * joint.global_bind
+                    joint.rest_pose = linalg.matrix4_from_trs_f32(
+                        parent.local_pose.translation, 
+                        parent.local_pose.rotation, 
+                        parent.local_pose.scale
+                    ) * joint.rest_pose
                     parent_id = parent.parent
                 }
-                joint.global_bind = linalg.matrix4_from_quaternion(global_rotation) * joint.global_bind
+                joint.rest_pose = linalg.matrix4_from_trs_f32(0, global_rotation, global_scale) * joint.rest_pose
             }
         }
 
         // Load animations
-        for animation in gltf_asset.animations {
-            for channel in animation.channels {
-                // TODO
-            }            
+        for gltf_animation in gltf_asset.animations {
+            animation := add_animation(manager)
+            animation.name = strings.clone(gltf_animation.name)
+            animation.skeleton = 0
+
+            // Identify skeleton
+            node_to_index: map[int]Joint_ID
+            for channel in gltf_animation.channels {
+                for joint_map, skeleton_index in skeleton_node_to_index {
+                    if channel.target.node in joint_map {
+                        animation.skeleton = skeletons[skeleton_index]
+                        node_to_index = joint_map
+                    }
+                    break
+                }
+                if animation.skeleton != 0 do break
+            }
+            if animation.skeleton == 0 do log.fatal("Failed to identify target skeleton for animation", gltf_animation.name)
+
+            skeleton := get_skeleton(manager, animation.skeleton)
+            animation.channels = make([]Animation_Channel, len(gltf_animation.channels))
+
+            for gltf_channel, channel_index in gltf_animation.channels {
+                channel := &animation.channels[channel_index]
+                if gltf_channel.target.node not_in node_to_index {
+                    log.error("Node", gltf_channel.target.node, "can't be found in skeleton; available joints:")
+                    for key in node_to_index {
+                        log.error(key)
+                    }
+                    assert(gltf_channel.target.node in node_to_index)
+                }
+                channel.joint = node_to_index[gltf_channel.target.node]
+                sampler := gltf_animation.samplers[gltf_channel.sampler]
+                switch sampler.interpolation {
+                    case "LINEAR":
+                        channel.interpolation = .Linear
+                    case "STEP":
+                        channel.interpolation = .Step
+                    case "CUBICSPLINE":
+                        channel.interpolation = .CubicSpline
+                    case:
+                        log.fatal("Invalid animation interpolation mode '", sampler.interpolation, "'.", sep="")
+                }
+
+                input_accessor := gltf_asset.accessors[sampler.input]
+                output_accessor := gltf_asset.accessors[sampler.output]
+                assert(input_accessor.type == "SCALAR" && input_accessor.componentType == .F32)
+                assert(output_accessor.componentType == .F32)
+                assert(input_accessor.count == output_accessor.count)
+
+                input_bufferview := gltf_asset.bufferViews[input_accessor.bufferView]
+                input_start := input_bufferview.byteOffset
+                input_end := input_bufferview.byteOffset + input_bufferview.byteLength
+                input_bytes := gltf_asset.buffers[input_bufferview.buffer].memory[input_start:input_end]
+                channel.input = make([]f32, input_accessor.count)
+                input_data := cast([^]f32)raw_data(input_bytes)
+                copy(channel.input, input_data[:input_accessor.count])
+
+                switch gltf_channel.target.path {
+                    case "translation":
+                        assert(output_accessor.type == "VEC3")
+                        channel.target = .Translation
+                    case "rotation":
+                        assert(output_accessor.type == "VEC4")
+                        channel.target = .Rotation
+                    case "scale":
+                        assert(output_accessor.type == "VEC3")
+                        channel.target = .Scale
+                    case "weights":
+                        assert(output_accessor.type == "SCALAR")
+                        channel.target = .Weights
+                    case:
+                        log.fatal("Invalid animation channel target path '", gltf_channel.target.path, "'.", sep="")
+                }
+
+                output_bufferview := gltf_asset.bufferViews[output_accessor.bufferView]
+                output_start := output_bufferview.byteOffset
+                output_end := output_bufferview.byteOffset + output_bufferview.byteLength
+                output_bytes := gltf_asset.buffers[output_bufferview.buffer].memory[output_start:output_end]
+                output_components := get_accessor_type_components(output_accessor.type)
+                channel.output = make([]f32, output_accessor.count * output_components)
+                output_data := cast([^]f32)raw_data(output_bytes)
+                copy(channel.output, output_data[:output_accessor.count * output_components])                                
+            }
         }
     }
 

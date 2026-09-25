@@ -30,13 +30,13 @@ Asset :: struct {
     materials:    []ID,
     textures:     []ID,
     skeletons:    []ID,
-    // text:         []ID,
+    animations:   []ID,
     link:         ^Asset,
 }
 
 Catalog :: struct {
-    system:    Asset,
-    animation: Asset,
+    system:        Asset,
+    animation:     Asset,
 }
 
 Manager :: struct {
@@ -45,16 +45,18 @@ Manager :: struct {
     fonts:    map[string]Font,
     catalog:  Catalog,
     pools: struct {
-        mesh:     pool.Pool(Mesh),
-        texture:  pool.Pool(Texture),
-        material: pool.Pool(Material),
-        skeleton: pool.Pool(Skeleton),
+        mesh:      pool.Pool(Mesh),
+        texture:   pool.Pool(Texture),
+        material:  pool.Pool(Material),
+        skeleton:  pool.Pool(Skeleton),
+        animation: pool.Pool(Animation),
     },
     items: struct {
-        mesh:     map[ID]^Mesh,
-        texture:  map[ID]^Texture,
-        material: map[ID]^Material,
-        skeleton: map[ID]^Skeleton,
+        mesh:      map[ID]^Mesh,
+        texture:   map[ID]^Texture,
+        material:  map[ID]^Material,
+        skeleton:  map[ID]^Skeleton,
+        animation: map[ID]^Animation,
     }
 }
 
