@@ -19,7 +19,7 @@ Vertex_Text :: struct {
 }
 
 Vertex_Joint :: struct {
-    joints:  [4]u8,
+    joints:  [4]u32,
     weights: [4]f32,
 }
 

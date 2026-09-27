@@ -11,10 +11,12 @@ import stbi "vendor:stb/image"
 ID :: distinct u32
 
 File_Header :: struct {
-    magic_number:   u32,
-    mesh_count:     u32,
-    material_count: u32,
-    texture_count:  u32,
+    magic_number:    u32,
+    mesh_count:      u32,
+    material_count:  u32,
+    texture_count:   u32,
+    skeleton_count:  u32,
+    animation_count: u32
 }
 
 read_file_header :: proc(memory: []byte) -> (result: File_Header, ok: bool) {
@@ -88,28 +90,32 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
     }
 
     if process {
-        meshes    := make([dynamic]ID)
-        materials := make([dynamic]ID)
-        textures  := make([dynamic]ID)
-        skeletons := make([dynamic]ID)
+        meshes     := make([dynamic]ID)
+        materials  := make([dynamic]ID)
+        textures   := make([dynamic]ID)
+        skeletons  := make([dynamic]ID)
+        animations := make([dynamic]ID)
         defer delete(meshes)
         defer delete(materials)
         defer delete(textures)
         defer delete(skeletons)
+        defer delete(animations)
 
         for import_file in files {
             _, ext := os.split_filename(import_file)
             switch ext {
                 case "glb":
-                    import_meshes, import_materials, import_textures, import_skeletons := import_glb_asset(manager, import_file)
+                    import_meshes, import_materials, import_textures, import_skeletons, import_animations := import_glb_asset(manager, import_file)
                     append(&meshes, ..import_meshes[:])
                     append(&materials, ..import_materials[:])
                     append(&textures, ..import_textures[:])
                     append(&skeletons, ..import_skeletons[:])
+                    append(&animations, ..import_animations[:])
                     delete(import_meshes)
                     delete(import_materials)
                     delete(import_textures)
                     delete(import_skeletons)
+                    delete(import_animations)
                 case "jpeg", "png":
                     texture := add_texture(manager)
                     pixels := stbi.load(cstring(raw_data(import_file)), &texture.width, &texture.height, &texture.channels, 0)
@@ -136,6 +142,9 @@ add_asset :: proc(manager: ^Manager, asset: ^Asset, path: string, files: ..strin
         asset.skeletons = make([]ID, len(skeletons))
         copy(asset.skeletons, skeletons[:])
 
+        asset.animations = make([]ID, len(animations))
+        copy(asset.animations, animations[:])
+
         write(manager, asset)
     }
     else {
@@ -153,6 +162,9 @@ write :: proc(manager: ^Manager, asset: ^Asset) {
     texture_id_to_index := make(map[ID]u32)
     defer delete(texture_id_to_index)
     texture_id_to_index[0] = 0
+
+    skeleton_id_to_index := make(map[ID]u32)
+    defer delete(skeleton_id_to_index)
 
     for id, index in asset.textures {
         texture := get_texture(manager, id)
@@ -181,6 +193,27 @@ write :: proc(manager: ^Manager, asset: ^Asset) {
         }
         else {
             total_size += get_serialized_size_mesh(mesh)
+        }
+    }
+
+    for id, index in asset.skeletons {
+        skeleton := get_skeleton(manager, id)
+        if skeleton == nil {
+            log.error("Failed to find asset skeleton with ID", id, "when writing asset file.")
+        }
+        else {
+            total_size += get_serialized_size_skeleton(skeleton)
+            skeleton_id_to_index[id] = u32(index)
+        }
+    }
+
+    for id in asset.animations {
+        animation := get_animation(manager, id)
+        if animation == nil {
+            log.error("Failed to find asset animation with ID", id, "when writing asset file.")
+        }
+        else {
+            total_size += get_serialized_size_animation(animation)
         }
     }
 
@@ -215,6 +248,18 @@ write :: proc(manager: ^Manager, asset: ^Asset) {
         block = block[size:]
     }
 
+    for id in asset.skeletons {
+        skeleton := get_skeleton(manager, id)
+        size := serialize_skeleton(block, skeleton)
+        block = block[size:]
+    }
+
+    for id in asset.animations {
+        animation := get_animation(manager, id)
+        size := serialize_animation(block, animation, skeleton_id_to_index)
+        block = block[size:]
+    }
+
     write_error := os.write_entire_file(asset.path, memory)
     if write_error != nil do log.fatal("Failed to write asset file", asset.path)
     else                  do log.info("Asset", asset.path, "was successfully written")
@@ -244,6 +289,12 @@ load :: proc(manager: ^Manager, asset: ^Asset, path: string) {
     if header.mesh_count > 0 {
         asset.meshes = make([]ID, header.mesh_count)
     }
+    if header.skeleton_count > 0 {
+        asset.skeletons = make([]ID, header.skeleton_count)
+    }
+    if header.animation_count > 0 {
+        asset.animations = make([]ID, header.animation_count)
+    }
 
     for &id in asset.textures {
         texture := add_texture(manager)
@@ -263,6 +314,20 @@ load :: proc(manager: ^Manager, asset: ^Asset, path: string) {
         mesh := add_mesh(manager)
         id = mesh.id
         size := deserialize_mesh(mesh, block, asset.materials)
+        block = block[size:]
+    }
+
+    for &id in asset.skeletons {
+        skeleton := add_skeleton(manager)
+        id = skeleton.id
+        size := deserialize_skeleton(skeleton, block)
+        block = block[size:]
+    }
+
+    for &id in asset.animations {
+        animation := add_animation(manager)
+        id = animation.id
+        size := deserialize_animation(animation, block, asset.skeletons)
         block = block[size:]
     }
 
@@ -286,6 +351,25 @@ release :: proc(manager: ^Manager, asset: ^Asset) {
     for id in asset.textures {
         texture := get_texture(manager, id)
         delete(texture.pixels)
+    }
+
+    // Skeletons
+    for id in asset.skeletons {
+        skeleton := get_skeleton(manager, id)
+        for joint in skeleton.joints {
+            delete(joint.name)
+        }
+        delete(skeleton.joints)
+    }
+
+    // Animations
+    for id in asset.animations {
+        animation := get_animation(manager, id)
+        for channel in animation.channels {
+            delete(channel.input)
+            delete(channel.output)
+        }
+        delete(animation.channels)
     }
 }
 

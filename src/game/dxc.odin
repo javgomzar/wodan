@@ -471,8 +471,12 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
             offset = 12
         case "COLOR":
             offset = 20
+        case "JOINTS":
+            offset = 0
+        case "WEIGHTS":
+            offset = 16
         case:
-            log.fatal("Invalid semantic name")
+            log.fatal("Invalid semantic name '", name, "'.", sep="")
     }
 
     return d3d12.INPUT_ELEMENT_DESC{

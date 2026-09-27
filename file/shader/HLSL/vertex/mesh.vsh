@@ -5,6 +5,8 @@ struct VS_IN {
     float3 normal: NORMAL;
     float2 texture: TEXCOORD;
     float4 color: COLOR;
+    uint4 joints: JOINTS;
+    float4 weights: WEIGHTS;
 };
 
 struct VS_OUT {

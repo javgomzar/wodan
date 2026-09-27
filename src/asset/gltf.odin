@@ -217,10 +217,11 @@ parse_gltf_json :: proc(memory: []byte) -> GLTF_Asset {
 }
 
 import_glb_asset :: proc(manager: ^Manager, path: string) -> (
-    meshes:    [dynamic]ID,
-    materials: [dynamic]ID,
-    textures:  [dynamic]ID,
-    skeletons: [dynamic]ID,
+    meshes:     [dynamic]ID,
+    materials:  [dynamic]ID,
+    textures:   [dynamic]ID,
+    skeletons:  [dynamic]ID,
+    animations: [dynamic]ID,
 ) {
     path := path
     arena: vmem.Arena
@@ -250,9 +251,11 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
     pointer = pointer[size_of(bin_chunk):]
     gltf_asset.buffers[0].memory = pointer
 
-    n_images    := len(gltf_asset.images)
-    n_materials := len(gltf_asset.materials)
-    n_meshes    := len(gltf_asset.meshes)
+    n_images     := len(gltf_asset.images)
+    n_materials  := len(gltf_asset.materials)
+    n_meshes     := len(gltf_asset.meshes)
+    n_skeletons  := len(gltf_asset.skins)
+    n_animations := len(gltf_asset.animations)
 
     // Load textures
     if n_images > 0 {
@@ -328,9 +331,11 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
         )
     }
 
-    if len(gltf_asset.animations) > 0 {
+    if n_animations + n_skeletons > 0 {
+        start := common.get_wall_clock()
+
         // Keeping track of joint nodes for each skeleton
-        skeleton_node_to_index := make([]map[int]Joint_ID, len(gltf_asset.skins))
+        skeleton_node_to_index := make([]map[int]Joint_ID, n_skeletons)
         defer delete(skeleton_node_to_index)
 
         // Load skins
@@ -464,6 +469,8 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 }
                 joint.rest_pose = linalg.matrix4_from_trs_f32(0, global_rotation, global_scale) * joint.rest_pose
             }
+
+            append(&skeletons, skeleton.id)
         }
 
         // Load animations
@@ -551,12 +558,21 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 output_data := cast([^]f32)raw_data(output_bytes)
                 copy(channel.output, output_data[:output_accessor.count * output_components])                                
             }
+
+            append(&animations, animation.id)
         }
+
+        end := common.get_wall_clock()
+        log.info("GLTF:", 
+            n_skeletons, n_skeletons > 1? "skeletons" : "skeleton", "and",
+            n_animations, n_animations > 1? "animations" : "animation", "loaded in", 
+            common.get_seconds_elapsed(start, end), "seconds."
+        )
     }
 
     // Load meshes
     if n_meshes > 0 {
-        start_meshes := common.get_wall_clock()
+        start := common.get_wall_clock()
         for gltf_mesh in gltf_asset.meshes {
             mesh := add_mesh(manager)
             mesh.name = strings.clone(gltf_mesh.name)
@@ -655,7 +671,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                             case "JOINTS_0":
                                 for i in 0..<accessor.count {
                                     vector := cast([^]u8)raw_data(pointer[i*byte_stride:])
-                                    primitive.joints[i].joints = { vector[0], vector[1], vector[2], vector[3] }
+                                    primitive.joints[i].joints = { u32(vector[0]), u32(vector[1]), u32(vector[2]), u32(vector[3]) }
                                 }
                             case "WEIGHTS_0":
                                 for i in 0..<accessor.count {
@@ -675,9 +691,9 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
             }
             append(&meshes, mesh.id)
         }
-        end_meshes := common.get_wall_clock()
+        end := common.get_wall_clock()
         log.info("GLTF:", n_meshes, n_meshes > 1? "meshes" : "mesh", "loaded in", 
-            common.get_seconds_elapsed(start_meshes, end_meshes), "seconds."
+            common.get_seconds_elapsed(start, end), "seconds."
         )
     }
 
