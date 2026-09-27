@@ -185,51 +185,6 @@ test_serialization_mesh :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_serialization_joint :: proc(t: ^testing.T) {
-    joint := asset.Joint{
-        id = 0,
-        name = "Test Joint",
-        parent = -1,
-        inverse_bind = {
-            1, 0, 0, 0,
-            0, 1, 0, 5,
-            0, 0, 1, 0,
-            0, 0, 0, 1,
-        },
-        rest_pose = {
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            0,-5, 0, 1,
-        },
-        local_pose = {
-            translation = 0,
-            rotation = 1,
-            scale = 1,
-        },
-    }
-
-    expected_size := asset.get_serialized_size_joint(joint)
-    memory := make([]byte, expected_size)
-    defer delete(memory)
-
-    bytes_written := asset.serialize_joint(memory, joint)
-    testing.expect(t, expected_size == bytes_written)
-
-    loaded_joint: asset.Joint
-    deserialized_size := asset.deserialize_joint(&loaded_joint, memory)
-    defer delete(loaded_joint.name)
-    testing.expect(t, deserialized_size == expected_size)
-
-    testing.expect(t, joint.id == loaded_joint.id)
-    testing.expect(t, joint.name == loaded_joint.name)
-    testing.expect(t, joint.parent == loaded_joint.parent)
-    testing.expect(t, joint.inverse_bind == loaded_joint.inverse_bind)
-    testing.expect(t, joint.rest_pose == loaded_joint.rest_pose)
-    testing.expect(t, joint.local_pose == loaded_joint.local_pose)
-}
-
-@(test)
 test_serialization_skeleton :: proc(t: ^testing.T) {
     skeleton := asset.Skeleton{
         id = 1,
@@ -284,6 +239,80 @@ test_serialization_skeleton :: proc(t: ^testing.T) {
         testing.expect(t, joint.rest_pose == loaded_joint.rest_pose)
         testing.expect(t, joint.local_pose == loaded_joint.local_pose)
     }
+}
+
+@(test)
+test_serialization_animation :: proc(t: ^testing.T) {
+    animation: asset.Animation = {
+        name = "Test Animation",
+        skeleton = 1,
+        channels = {
+            {
+                joint = 0,
+                target = .Translation,
+                interpolation = .CubicSpline,
+                min_time = 0,
+                max_time = 1,
+                input = {0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1},
+                output = {
+                    0, 0, 0,
+                    0.1, 0.1, 0.1,
+                    0.2, 0.2, 0.2,
+                    0.3, 0.3, 0.3,
+                    0.4, 0.4, 0.4,
+                    0.5, 0.5, 0.5,
+                    0.6, 0.6, 0.6,
+                    0.7, 0.7, 0.7,
+                    0.8, 0.8, 0.8,
+                    0.9, 0.9, 0.9,
+                    1.0, 1.0, 1.0,
+                },
+            },
+            {
+                joint = 1,
+                target = .Rotation,
+                interpolation = .Linear,
+                min_time = 0,
+                max_time = 1,
+                input = {0, 0.5, 1},
+                output = {
+                    0, 0, 0, 1,
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                }
+            }
+        },
+    }
+
+    skeleton_id_to_index: map[asset.ID]u32
+    defer delete(skeleton_id_to_index)
+    skeleton_id_to_index[1] = 0
+
+    expected_size := asset.get_serialized_size_animation(&animation)
+    memory := make([]byte, expected_size)
+    defer delete(memory)
+    bytes_written := asset.serialize_animation(memory, &animation, skeleton_id_to_index)
+    testing.expect(t, expected_size == bytes_written)
+    loaded_animation: asset.Animation
+    loaded_size := asset.deserialize_animation(&loaded_animation, memory, {1})
+    testing.expect(t, expected_size == loaded_size)
+
+    testing.expect(t, animation.name == loaded_animation.name)
+    delete(loaded_animation.name)
+    testing.expect(t, animation.skeleton == loaded_animation.skeleton)
+    for channel, index in animation.channels {
+        loaded_channel := loaded_animation.channels[index]
+        testing.expect(t, channel.joint == loaded_channel.joint)
+        testing.expect(t, channel.target == loaded_channel.target)
+        testing.expect(t, channel.interpolation == loaded_channel.interpolation)
+        testing.expect(t, channel.min_time == loaded_channel.min_time)
+        testing.expect(t, channel.max_time == loaded_channel.max_time)
+        testing.expect(t, slice.equal(channel.input, loaded_channel.input))
+        delete(loaded_channel.input)
+        testing.expect(t, slice.equal(channel.output, loaded_channel.output))
+        delete(loaded_channel.output)
+    }
+    delete(loaded_animation.channels)
 }
 
 @(test)

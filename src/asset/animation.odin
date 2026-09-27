@@ -196,6 +196,7 @@ get_serialized_size_animation_channel :: proc(channel: ^Animation_Channel) -> (s
 
 serialize_animation_channel :: proc(memory: []byte, channel: ^Animation_Channel) -> (size: int) {
     block := memory
+
     dump_to_memory(block, channel.joint)
     size += size_of(channel.joint)
     block = block[size_of(channel.joint):]
@@ -227,6 +228,42 @@ serialize_animation_channel :: proc(memory: []byte, channel: ^Animation_Channel)
     return
 }
 
+deserialize_animation_channel :: proc(memory: []byte, channel: ^Animation_Channel) -> (size: int) {
+    block := memory
+
+    channel.joint = extract_from_memory(block, Joint_ID)
+    size += size_of(Joint_ID)
+    block = block[size_of(Joint_ID):]
+
+    channel.target = extract_from_memory(block, Animation_Target)
+    size += size_of(Animation_Target)
+    block = block[size_of(Animation_Target):]
+
+    channel.interpolation = extract_from_memory(block, Animation_Interpolation)
+    size += size_of(Animation_Interpolation)
+    block = block[size_of(Animation_Interpolation):]
+
+    channel.min_time = extract_from_memory(block, f32)
+    size += size_of(f32)
+    block = block[size_of(f32):]
+
+    channel.max_time = extract_from_memory(block, f32)
+    size += size_of(f32)
+    block = block[size_of(f32):]
+
+    input_size: int
+    channel.input, input_size = deserialize_slice(block, []f32)
+    size += input_size
+    block = block[input_size:]
+
+    output_size: int
+    channel.output, output_size = deserialize_slice(block, []f32)
+    size += output_size
+    block = block[output_size:]
+
+    return
+}
+
 Animation :: struct {
     id:       ID,
     name:     string,
@@ -251,16 +288,64 @@ get_animation :: proc(manager: ^Manager, id: ID) -> ^Animation {
 
 get_serialized_size_animation :: proc(animation: ^Animation) -> (size: int) {
     size += get_serialized_size_string(animation.name)
-    size += size_of(ID) // skeleton ID
+    size += size_of(u32) // skeleton index
+    size += size_of(u32) // len(channels)
     for &channel in animation.channels {
         size += get_serialized_size_animation_channel(&channel)
     }
     return
 }
 
-// serialize_animation :: proc(memory: []byte, animation: ^Animation, material_id_to_index: map[ID]u32) -> (size: int) {
+serialize_animation :: proc(memory: []byte, animation: ^Animation, skeleton_id_to_index: map[ID]u32) -> (size: int) {
+    block := memory
+    
+    name_size := serialize_string(block, animation.name)
+    size += name_size
+    block = block[name_size:]
 
-// }
+    dump_to_memory(block, skeleton_id_to_index[animation.skeleton])
+    size += size_of(u32)
+    block = block[size_of(u32):]
+
+    dump_to_memory(block, u32(len(animation.channels)))
+    size += size_of(u32)
+    block = block[size_of(u32):]
+    
+    for &channel in animation.channels {
+        channel_size := serialize_animation_channel(block, &channel)
+        size += channel_size
+        block = block[channel_size:]
+    }
+
+    return
+}
+
+deserialize_animation :: proc(animation: ^Animation, memory: []byte, skeletons: []ID) -> (size: int) {
+    block := memory
+
+    name_size: int
+    animation.name, name_size = deserialize_string(block)
+    size += name_size
+    block = block[name_size:]
+
+    skeleton_index := extract_from_memory(block, u32)
+    animation.skeleton = skeletons[skeleton_index]
+    size += size_of(u32)
+    block = block[size_of(u32):]
+
+    n_channels := extract_from_memory(block, u32)
+    animation.channels = make([]Animation_Channel, n_channels)
+    size += size_of(u32)
+    block = block[size_of(u32):]
+
+    for &channel in animation.channels {
+        channel_size := deserialize_animation_channel(block, &channel)
+        size += channel_size
+        block = block[channel_size:]
+    }
+
+    return
+}
 
 Animator_Loop :: enum {
     Repeat,
