@@ -3,6 +3,7 @@ package game
 import "core:fmt"
 import "core:log"
 import "core:mem"
+import "core:math"
 import "core:reflect"
 import "core:strings"
 import "base:runtime"
@@ -34,15 +35,23 @@ UI_Size :: struct {
 
 UI_Flag :: enum {
     Drag,
-    Draw_Rect,
-    Draw_Text,
 }
 
 UI_Flags :: bit_set[UI_Flag]
 
+UI_Draw_Flag :: enum {
+    Rect,
+    Text,
+    Fillbar,
+    Slider,
+}
+
+UI_Draw_Flags :: bit_set[UI_Draw_Flag]
+
 UI_Element :: struct {
     name:       string,
     flags:      UI_Flags,
+    draw_flags: UI_Draw_Flags,
     sizes:      [2]UI_Size,
     alignments: [2]UI_Alignment,
     last_frame: u64,
@@ -62,9 +71,7 @@ UI_Element :: struct {
     points:    f32,
     
     pad:         [2]f32,
-    min_value:   f32,
     value:       f32,
-    max_value:   f32,
     t:           f32,
     color:       [4]f32,
     drag_offset: [2]f32,
@@ -77,6 +84,7 @@ UI_Element :: struct {
 
 UI_Context :: struct {
     frame:         u64,
+    delta_time:    f32,
     input:         ^common.Input_Context,
     asset_manager: ^asset.Manager,
     pool:          pool.Pool(UI_Element),
@@ -112,6 +120,7 @@ create_ui_element :: proc(
     points:     f32 = 16.0,
     color:      [4]f32 = {1, 1, 1, 1},
     flags:      UI_Flags = {},
+    draw:       UI_Draw_Flags = {},
 ) -> ^UI_Element {
     element, ok := ui_context.elements[name]
     if !ok {
@@ -126,6 +135,7 @@ create_ui_element :: proc(
     element.parent = ui_context.root
     element.color = color
     element.flags = flags
+    element.draw_flags = draw
     element.previous = ui_context.last
     if ui_context.last != nil do ui_context.last.next = element
     ui_context.last = element
@@ -235,12 +245,10 @@ UI_Text :: proc(
     font:       string = "DejaVuSansMono",
     points:     f32 = 16.0, 
     color:      [4]f32 = {1, 1, 1, 1},
-    flags:      UI_Flags = {.Draw_Text},
+    flags:      UI_Flags = {},
+    draw:       UI_Draw_Flags = {.Text},
 ) -> ^UI_Element
 {
-    name := name
-    text := text
-    fmt_vars := fmt_vars
     element := create_ui_element(
         name, 
         {{.Text, 0}, {.Text, 0}},
@@ -250,6 +258,7 @@ UI_Text :: proc(
         points = points,
         color = color,
         flags = flags,
+        draw = draw,
     )
     return element
 }
@@ -259,7 +268,8 @@ UI_Row :: proc(
     elements: ..^UI_Element,
     pad: [2]f32 = {10, 10},
     alignments: [2]UI_Alignment = {.Center, .Center},
-    flags: UI_Flags = {.Draw_Rect},
+    flags: UI_Flags = {},
+    draw: UI_Draw_Flags = {.Rect},
 ) -> ^UI_Element {
     element := create_ui_element(
         name, 
@@ -269,6 +279,7 @@ UI_Row :: proc(
         children = elements,
         color = {0.2, 0.2, 0.2, 0.5},
         flags = flags,
+        draw = draw,
     )
     return element
 }
@@ -278,7 +289,8 @@ UI_Column :: proc(
     elements: ..^UI_Element,
     pad: [2]f32 = {10, 10},
     alignments: [2]UI_Alignment = {.Center, .Center},
-    flags: UI_Flags = {.Draw_Rect},
+    flags: UI_Flags = {},
+    draw: UI_Draw_Flags = {.Rect},
 ) -> ^UI_Element {
     element := create_ui_element(
         name, 
@@ -288,6 +300,7 @@ UI_Column :: proc(
         children = elements,
         color = {0.2, 0.2, 0.2, 0.5},
         flags = flags,
+        draw = draw,
     )
     return element
 }
@@ -304,7 +317,8 @@ UI_Table_elements :: proc(
     elements: ..^UI_Element,
     alignments: [2]UI_Alignment = {.Center, .Center},
     pad: [2]f32 = {10, 10},
-    flags: UI_Flags = {.Draw_Rect}
+    flags: UI_Flags = {},
+    draw: UI_Draw_Flags = {.Rect}
 ) -> ^UI_Element {
     assert(len(elements) == rows * cols)
 
@@ -351,6 +365,7 @@ UI_Table_elements :: proc(
         pad = pad,
         color = {0.2, 0.2, 0.2, 0.5},
         flags = flags,
+        draw = draw,
     )
 
     return table
@@ -361,7 +376,8 @@ UI_Table_enumerated_array :: proc(
     elements: $T/[$U]$V,
     alignments: [2]UI_Alignment = {.Center, .Center},
     pad: [2]f32 = {10, 10},
-    flags: UI_Flags = {.Draw_Rect}
+    flags: UI_Flags = {},
+    draw: UI_Draw_Flags = {.Rect},
 ) -> ^UI_Element {
     V_typeid := reflect.typeid_elem(typeid_of(type_of(elements))) // Issue https://github.com/odin-lang/Odin/issues/7464, typeid(V) should work
     fields := reflect.struct_fields_zipped(V_typeid)
@@ -395,6 +411,56 @@ UI_Table_enumerated_array :: proc(
     return table
 }
 
+UI_Fillbar :: proc(
+    name: string,
+    percent: f32,
+    width: f32,
+    height: f32 = 10,
+    text: string = "",
+    color: [4]f32 = Color[.Red]
+) -> ^UI_Element {
+    draw_flags := UI_Draw_Flags{.Fillbar}
+    if len(text) > 0 {
+        draw_flags |= {.Text}
+    }
+    element := create_ui_element(
+        name,
+        {{.Pixels, width}, {.Pixels, height}},
+        text = text,
+        draw = {.Fillbar},
+        color = color,
+    )
+    element.value = percent
+    return element
+}
+
+UI_Slider :: proc(name: string, color: [4]f32, width: f32 = 128, height: f32 = 16) -> ^UI_Element {
+    element := create_ui_element(
+        name,
+        {{.Pixels, width}, {.Pixels, height}},
+        alignments = {.Center, .Center},
+        color = color,
+        flags = {.Drag},
+        draw = {.Fillbar, .Slider}
+    )
+
+    if element.hovered || element.dragged {
+        element.t += ui_context.delta_time
+        if element.t >= 1 {
+            element.t = 1
+        }
+    }
+    else {
+        element.t = 0
+    }
+
+    if element.dragged {
+        element.value = clamp((ui_context.input.mouse.cursor.x - element.position.x) / width, 0, 1)
+    }
+
+    return element
+}
+
 compute_layout :: proc() {
     element := ui_context.root.next
     for element != nil {
@@ -421,6 +487,7 @@ update_ui :: proc(memory: ^Game_Memory) {
     
     render_group := &memory.render_group
     ui_context.frame = memory.renderer.frame
+    ui_context.delta_time = memory.delta_time
 
     ui_context.root = create_ui_element("root", {{.Pixels, f32(render_group.width)}, {.Pixels, f32(render_group.height)}})
 
@@ -462,15 +529,35 @@ update_ui :: proc(memory: ^Game_Memory) {
         }
         element.position = position
 
-        if .Draw_Rect in element.flags {
+        if .Rect in element.draw_flags {
             push_rect(render_group, position.x, position.y, element.sizes.x.value, element.sizes.y.value, color = element.color)
         }
 
-        if .Draw_Text in element.flags {
+        if .Slider in element.draw_flags {
+            exp_t := (1 - math.exp(-8*element.t))
+            height := element.sizes.y.value + 4 * exp_t
+            width := f32(8.0)
+            cursor := position.x + element.sizes.x.value * element.value
+            push_rect(
+                render_group,
+                cursor - 0.5 * width,
+                position.y + 0.5 * (element.sizes.y.value - height),
+                width, height,
+                color = {0.5 * (1 + exp_t), 0.5 * (1 + exp_t), 0.5 * (1 + exp_t), 1},
+            )
+        }
+
+        if .Fillbar in element.draw_flags {
+            push_rect(render_group, position.x, position.y, element.sizes.x.value * element.value, element.sizes.y.value, color = element.color)
+            push_rect(render_group, position.x, position.y, element.sizes.x.value,                 element.sizes.y.value, color = Color[.DarkGray])
+        }
+
+        if .Text in element.draw_flags {
             rect := asset.get_text_rect(element.font, element.text, 0, 0, element.points)
             pen := position - {0, rect.top}
             push_text(render_group, element.text, pen.x, pen.y, element.points, element.font, element.color)
         }
+
         element, element.next = element.next, nil
     }
 

@@ -11,6 +11,7 @@ import "../asset"
 Color_ID :: enum {
     White,
     Gray,
+    DarkGray,
     Black,
     Red,
     Green,
@@ -21,15 +22,16 @@ Color_ID :: enum {
 }
 
 Color :: [Color_ID][4]f32 {
-    .White   = {1, 1, 1, 1},
-    .Gray    = {0.5, 0.5, 0.5, 1},
-    .Black   = {},
-    .Red     = {1, 0, 0, 1},
-    .Green   = {0, 1, 0, 1},
-    .Blue    = {0, 0, 1, 1},
-    .Yellow  = {1, 1, 0, 1},
-    .Cyan    = {0, 1, 1, 1},
-    .Magenta = {1, 0, 1, 1},
+    .White    = {1, 1, 1, 1},
+    .Gray     = {0.5, 0.5, 0.5, 1},
+    .DarkGray = {0.2, 0.2, 0.2, 1},
+    .Black    = {},
+    .Red      = {1, 0, 0, 1},
+    .Green    = {0, 1, 0, 1},
+    .Blue     = {0, 0, 1, 1},
+    .Yellow   = {1, 1, 0, 1},
+    .Cyan     = {0, 1, 1, 1},
+    .Magenta  = {1, 0, 1, 1},
 }
 
 Camera :: struct {
