@@ -44,6 +44,7 @@ UI_Draw_Flag :: enum {
     Text,
     Fillbar,
     Slider,
+    Checkbox,
 }
 
 UI_Draw_Flags :: bit_set[UI_Draw_Flag]
@@ -235,6 +236,31 @@ delete_ui_element :: proc(element: ^UI_Element) {
     key, value := delete_key(&ui_context.elements, element.name)
     delete(element.name)
     pool.put(&ui_context.pool, element)
+}
+
+UI_Checkbox :: proc(
+    name: string,
+    width: f32 = 20,
+    height: f32 = 20,
+    alignments: [2]UI_Alignment = {.Center, .Center},
+) -> ^UI_Element {
+    element := create_ui_element(name,
+        {{.Pixels, width}, {.Pixels, height}},
+        alignments = alignments,
+        pad = {0, 0},
+        color = {0.25, 0.25, 0.25, 1},
+        draw = {.Rect, .Checkbox},
+    )
+
+    if element.hovered {
+        element.color = {0.4, 0.4, 0.4, 1}
+    }
+
+    if element.clicked {
+        element.active = !element.active
+    }
+
+    return element
 }
 
 UI_Text :: proc(
@@ -528,6 +554,10 @@ update_ui :: proc(memory: ^Game_Memory) {
             parent = parent.parent
         }
         element.position = position
+
+        if .Checkbox in element.draw_flags && element.active {
+            push_rect(render_group, position.x + 5, position.y + 5, element.sizes.x.value - 10, element.sizes.y.value - 10)
+        }
 
         if .Rect in element.draw_flags {
             push_rect(render_group, position.x, position.y, element.sizes.x.value, element.sizes.y.value, color = element.color)
