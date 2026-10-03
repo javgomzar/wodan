@@ -29,6 +29,10 @@ set_up_timing :: proc(memory_time_records: ^[Time_Record_ID]Time_Record) {
     }
 
     time_records = memory_time_records
+    for &record in time_records {
+        record.file = ""
+        record.procedure = ""
+    }
 }
 
 start_timer :: proc(id: Time_Record_ID, location := #caller_location) -> Timer {
