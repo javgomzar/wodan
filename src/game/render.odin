@@ -256,17 +256,33 @@ push_segment_world :: proc(
     vertices[1] = {end.x, end.y, end.z}
 }
 
-push_debug_skeleton :: proc(group: ^Render_Group, skeleton: ^asset.Skeleton) {
+push_debug_skeleton :: proc(group: ^Render_Group, skeleton: ^asset.Skeleton, poses: []asset.Joint_Pose) {
     n_segments := len(skeleton.joints) - 1
-    entry := add_entry(group, .Line, .Debug_Skeleton, true, material = asset.get_default_material(Color[.Red]))
+    entry := add_entry(group, .Line, .Debug_Skeleton, true, material = asset.get_default_material(Color[.Yellow]))
     entry.positions = asset.push_vertices(&group.positions, 2 * n_segments)
 
     current_index := 0
     for bone, index in skeleton.joints {
         if bone.parent != -1 {
             parent := skeleton.joints[bone.parent]
-            entry.positions.memory[2*current_index] = {bone.rest_pose[0, 3], bone.rest_pose[1, 3], bone.rest_pose[2, 3]}
-            entry.positions.memory[2*current_index + 1] = {parent.rest_pose[0, 3], parent.rest_pose[1, 3], parent.rest_pose[2, 3]}
+            parent_pose := poses[bone.parent]
+            parent_transform: matrix[4, 4]f32 = 1
+            parent_id := bone.parent
+            for parent_id != -1 {
+                parent_pose = poses[parent_id]
+                parent_transform = linalg.matrix4_from_trs_f32(
+                    parent_pose.translation, 
+                    parent_pose.rotation, 
+                    parent_pose.scale
+                ) * parent_transform
+                parent_id = skeleton.joints[parent_id].parent
+            }
+            parent_transform = skeleton.global_transform * parent_transform
+            pose := poses[index]
+            transform := parent_transform * linalg.matrix4_from_trs_f32(pose.translation, pose.rotation, pose.scale) * bone.inverse_bind
+            parent_transform = parent_transform * parent.inverse_bind
+            entry.positions.memory[2*current_index] = {transform[0, 3], transform[1, 3], transform[2, 3]}
+            entry.positions.memory[2*current_index+1] = {parent_transform[0, 3], parent_transform[1, 3], parent_transform[2, 3]}
             current_index += 1
         }
     }

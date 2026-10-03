@@ -487,6 +487,35 @@ UI_Slider :: proc(name: string, color: [4]f32, width: f32 = 128, height: f32 = 1
     return element
 }
 
+UI_Animator :: proc(name: string, animator: ^asset.Animator) {
+    checkbox_name := fmt.tprintf("%s.checkbox", name)
+    checkbox := UI_Checkbox(checkbox_name, alignments = {.Min, .Center})
+    animator.active = checkbox.active
+
+    row_name := fmt.tprintf("%s.row", name)
+    animation_name := fmt.tprintf("%s.animation", name)
+    first_row := UI_Row(row_name, checkbox, UI_Text(animation_name, animator.animation.name))
+
+    slider_name := fmt.tprintf("%s.slider", name)
+    slider := UI_Slider(slider_name, Color[.Red])
+    if slider.dragged {
+        animator.time = slider.value * animator.animation.duration
+    }
+    else {
+        slider.value = animator.time / animator.animation.duration
+    }
+
+    time_name := fmt.tprintf("%s.time", name)
+    UI_Column(name,
+        first_row,
+        slider,
+        UI_Text(time_name, "Time: %.3f", animator.time),
+        alignments = {.Min, .Center},
+        flags = {},
+        draw = {.Rect}
+    )
+}
+
 compute_layout :: proc() {
     element := ui_context.root.next
     for element != nil {
@@ -534,6 +563,8 @@ update_ui :: proc(memory: ^Game_Memory) {
         UI_Table("timing_table", memory.time_records, alignments = [2]UI_Alignment{.Max, .Max})
         common.clear_time_records()
     }
+    entity := &memory.entity_manager.entities[1]
+    UI_Animator("Test_animator", &entity.animator)
 
     compute_layout()
 

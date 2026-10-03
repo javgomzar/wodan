@@ -413,6 +413,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                     break
                 }
             }
+            skeleton.global_transform = linalg.matrix4_from_trs_f32(global_translation, global_rotation, global_scale)
 
             accessor := gltf_asset.accessors[skin.inverseBindMatrices]
             assert(accessor.componentType == .F32 && accessor.type == "MAT4" && accessor.count == len(skin.joints))
@@ -467,7 +468,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                     ) * joint.rest_pose
                     parent_id = parent.parent
                 }
-                joint.rest_pose = linalg.matrix4_from_trs_f32(0, global_rotation, global_scale) * joint.rest_pose
+                joint.rest_pose = skeleton.global_transform * joint.rest_pose
             }
 
             append(&skeletons, skeleton.id)
@@ -531,6 +532,9 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                 channel.input = make([]f32, input_accessor.count)
                 input_data := cast([^]f32)raw_data(input_bytes)
                 copy(channel.input, input_data[:input_accessor.count])
+                channel.min_time = channel.input[0]
+                channel.max_time = channel.input[len(channel.input) - 1]
+                animation.duration = max(channel.max_time, animation.duration)
 
                 switch gltf_channel.target.path {
                     case "translation":

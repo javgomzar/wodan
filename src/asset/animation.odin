@@ -1,6 +1,7 @@
 package asset
 
 import "core:log"
+import "core:math"
 import "core:math/linalg"
 import "core:container/pool"
 
@@ -20,7 +21,6 @@ Joint :: struct {
     inverse_bind: matrix[4, 4]f32,
     rest_pose:    matrix[4, 4]f32,
     local_pose:   Joint_Pose,
-    pose:         Joint_Pose,
 }
 
 get_serialized_size_joint :: proc(joint: Joint) -> (size: int) {
@@ -93,10 +93,11 @@ deserialize_joint :: proc(joint: ^Joint, memory: []byte) -> (size: int) {
 }
 
 Skeleton :: struct {
-    id:         ID,
-    root_joint: Joint_ID,
-    joints:     []Joint,
-    link:       ^Skeleton,
+    id:               ID,
+    root_joint:       Joint_ID,
+    joints:           []Joint,
+    global_transform: matrix[4, 4]f32,
+    link:             ^Skeleton,
 }
 
 add_skeleton :: proc(manager: ^Manager) -> ^Skeleton {
@@ -268,6 +269,7 @@ Animation :: struct {
     id:       ID,
     name:     string,
     skeleton: ID,
+    duration: f32,
     channels: []Animation_Channel,
 }
 
@@ -338,10 +340,13 @@ deserialize_animation :: proc(animation: ^Animation, memory: []byte, skeletons: 
     size += size_of(u32)
     block = block[size_of(u32):]
 
+    max_time: f32 = 0
     for &channel in animation.channels {
         channel_size := deserialize_animation_channel(block, &channel)
         size += channel_size
         block = block[channel_size:]
+
+        max_time = max(max_time, channel.max_time)
     }
 
     return
@@ -354,60 +359,105 @@ Animator_Loop :: enum {
 }
 
 Animator :: struct {
-    time:              f32,
-    animation:         ^Animation,
-    skeleton:          ^Skeleton,    
-    loop:              Animator_Loop,
-    current_index:     []int,
-    active:            bool,
+    time:      f32,
+    animation: ^Animation,
+    skeleton:  ^Skeleton,
+    loop:      Animator_Loop,
+    indices:   []int,
+    poses:     []Joint_Pose,
+    transform: []matrix[4,4]f32,
+    active:    bool,
+}
+
+start_animator :: proc(animator: ^Animator, skeleton: ^Skeleton, animation: ^Animation, loop: Animator_Loop = .Repeat) {
+    animator.time = 0
+    animator.animation = animation
+    animator.skeleton = skeleton
+    animator.loop = loop
+    if len(animator.indices) > 0 {
+        delete(animator.indices)
+    }
+    animator.indices = make([]int, len(animation.channels))
+    if len(animator.poses) > 0 {
+        delete(animator.poses)
+    }
+    animator.poses = make([]Joint_Pose, len(skeleton.joints))
+    for &pose in animator.poses {
+        pose.translation = 0
+        pose.rotation = 1
+        pose.scale = 1
+    }
+    animator.transform = make([]matrix[4,4]f32, len(skeleton.joints))
+    animator.active = true
 }
 
 update_animator :: proc(animator: ^Animator, dt: f32) {
-    animator.time += dt
-    for &channel, index in animator.animation.channels {
-        current_index := &animator.current_index[index]
-        joint := &animator.skeleton.joints[channel.joint]
-        interpolation_mode := channel.interpolation
-        if animator.time <= channel.min_time {
-            // Clamp to start
-            current_index^ = 0
-            interpolation_mode = .Step
-        }
-        else if animator.time >= channel.max_time || current_index^ == len(channel.output) - 1 {
-            // Clamp to end
-            current_index^ = len(channel.output) - 1
-            interpolation_mode = .Step
-        }
-        else {
-            next_time := channel.input[current_index^ + 1]
-            if animator.time >= next_time {
-                current_index^ += 1
+    if animator.active {
+        animator.time += dt
+        if animator.time > animator.animation.duration {
+            switch animator.loop {
+                case .Stop:
+                    animator.time = animator.animation.duration
+                case .Repeat, .Accumulate:
+                    animator.time = math.mod(animator.time, animator.animation.duration)
             }
+        }
+    }
+    
+    for &channel, index in animator.animation.channels {
+        current_index := &animator.indices[index]
+        interpolation_mode := channel.interpolation
+        clamp_start := animator.time <= channel.min_time
+        clamp_end := animator.time >= channel.max_time
+        if !(clamp_start || clamp_end) {
+            last_time := channel.input[current_index^]
+            for animator.time <= last_time {
+                current_index^ -= 1
+                last_time = channel.input[current_index^]
+            }
+            if current_index^ >= len(channel.input) - 1 {
+                clamp_end = true
+            }
+            else {
+                next_time := channel.input[current_index^ + 1]
+                for animator.time >= next_time {
+                    current_index^ += 1
+                    last_time = channel.input[current_index^]
+                    next_time = channel.input[current_index^ + 1]
+                }
+            }
+        }
+        if clamp_start || clamp_end {
+            interpolation_mode = .Step
+            current_index^ = clamp_end ? len(channel.input) - 1 : 0
         }
         last_index := current_index^
 
         // Compute interpolation
         value := [4]f32{}
         last_value := [4]f32{}
-        next_value := [4]f32{}
         components := channel.target == .Rotation ? 4 : 3
         last_output := channel.output[components*last_index:components*(last_index+1)]
-        next_output := channel.output[components*(last_index+1):components*(last_index+2)]
         for i in 0..<components {
             last_value[i] = last_output[i]
-            next_value[i] = next_output[i]
         }
 
-        switch channel.interpolation {
+        switch interpolation_mode {
             case .Step:
                 value = last_value
             case .Linear:
                 last_time := channel.input[last_index]
                 next_time := channel.input[last_index+1]
                 t := (animator.time - last_time) / (next_time - last_time)
+                next_value := [4]f32{}
+                next_output := channel.output[components*(last_index+1):components*(last_index+2)]
+                for i in 0..<components {
+                    next_value[i] = next_output[i]
+                }
 
                 if channel.target == .Rotation {
                     last_rotation := quaternion(x=last_value[0], y=last_value[1], z=last_value[2], w=last_value[3])
+
                     next_rotation := quaternion(x=next_value[0], y=next_value[1], z=next_value[2], w=next_value[3])
                     slerp_rotation := linalg.quaternion_slerp(last_rotation, next_rotation, t)
                     value = {slerp_rotation.x, slerp_rotation.y, slerp_rotation.z, slerp_rotation.w}
@@ -421,13 +471,14 @@ update_animator :: proc(animator: ^Animator, dt: f32) {
                 log.fatal("Invalid animation interpolation mode", channel.interpolation)
         }
     
+        pose := &animator.poses[channel.joint]
         switch channel.target {
             case .Translation:
-                joint.pose.translation = value.xyz
+                pose.translation = value.xyz
             case .Rotation:
-                joint.pose.rotation = quaternion(x = value[0], y = value[1], z = value[2], w = value[3])
+                pose.rotation = quaternion(x = value[0], y = value[1], z = value[2], w = value[3])
             case .Scale:
-                joint.pose.scale = value.xyz
+                pose.scale = value.xyz
             case .Weights:
                 log.fatal("Not implemented")
             case:

@@ -462,17 +462,25 @@ get_input_element :: proc(parameter: d3d12.SIGNATURE_PARAMETER_DESC) -> d3d12.IN
     }
     
     name := string(parameter.SemanticName)
-    input_slot: u32 = name == "POSITION" ? 0 : 1
+
+    input_slot: u32
+    switch name {
+        case "POSITION", "SV_VERTEXID", "SV_INSTANCEID":
+            input_slot = 0
+        case "NORMAL", "TEXCOORD", "COLOR":
+            input_slot = 1
+        case "JOINTS", "WEIGHTS":
+            input_slot = 2
+    }
+    
     offset: u32
     switch name {
-        case "POSITION", "NORMAL", "SV_VERTEXID", "SV_INSTANCEID":
+        case "POSITION", "NORMAL", "SV_VERTEXID", "SV_INSTANCEID", "JOINTS":
             offset = 0
         case "TEXCOORD":
             offset = 12
         case "COLOR":
             offset = 20
-        case "JOINTS":
-            offset = 0
         case "WEIGHTS":
             offset = 16
         case:
