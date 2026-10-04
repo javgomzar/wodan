@@ -155,6 +155,8 @@ Render_Entry :: struct {
     pipeline:         Shader_Pipeline_ID,
     positions:        asset.Vertex_Buffer_Entry(asset.Vertex_Position),
     attributes:       asset.Vertex_Buffer_Entry(asset.Vertex_Attributes),
+    joints:           asset.Vertex_Buffer_Entry(asset.Vertex_Joint),
+    pose:             asset.Vertex_Buffer_Entry([16]f32),
     indices:          asset.Vertex_Buffer_Entry(u32),
     instances:        asset.Vertex_Buffer_Entry(u32),
     transform:        matrix[4, 4]f32,
@@ -173,6 +175,7 @@ Render_Group :: struct {
     attributes:    asset.Vertex_Buffer(asset.Vertex_Attributes),
     text_vertices: asset.Vertex_Buffer(asset.Vertex_Text),
     text_offsets:  asset.Vertex_Buffer(u32),
+    poses:         asset.Vertex_Buffer([16]f32),
     indices:       asset.Vertex_Buffer(u32),
     commands:      [dynamic]Render_Entry,
 }
@@ -413,6 +416,7 @@ push_mesh :: proc(
     translation: linalg.Vector3f32 = 0,
     rotation:    linalg.Quaternionf32 = 1,
     scale:       linalg.Vector3f32 = 1,
+    animator:    ^asset.Animator = nil,
     outline:     bool = false,
 ) {
     for primitive in mesh.primitives {
@@ -439,6 +443,13 @@ push_mesh :: proc(
         }
         if len(primitive.attributes) > 0 {
             entry.attributes = asset.static_vertices(len(primitive.attributes), primitive.attribute_offset, asset.Vertex_Attributes)
+        }
+        if len(primitive.joints) > 0 {
+            if animator != nil {
+                entry.pose = asset.push_vertices(&group.poses, len(animator.transform))
+                copy(entry.pose.memory, animator.transform)
+                entry.joints = asset.static_vertices(len(primitive.joints), primitive.joint_offset, asset.Vertex_Joint)
+            }
         }
     }
 }

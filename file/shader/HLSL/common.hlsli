@@ -29,6 +29,7 @@ cbuffer PerDrawData: register(b2) {
     uint color_texture_index;
     uint normal_texture_index;
     uint pbr_texture_index;
+    uint joints;
 };
 
 sampler linear_wrap: register(s0);

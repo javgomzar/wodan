@@ -187,6 +187,7 @@ Primitive :: struct {
     material:         ID,
     position_offset:  int,
     attribute_offset: int,
+    joint_offset:     int,
     index_offset:     int,
 }
 

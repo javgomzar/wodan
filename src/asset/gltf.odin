@@ -638,7 +638,7 @@ import_glb_asset :: proc(manager: ^Manager, path: string) -> (
                     n_components := get_accessor_type_components(accessor.type)
                     byte_stride, byte_stride_ok := bufferview.byteStride.?
                     if !byte_stride_ok {
-                        byte_stride = n_components * get_component_type_size(.F32)
+                        byte_stride = n_components * get_component_type_size(accessor.componentType)
                     }
     
                     if key == "POSITION" {

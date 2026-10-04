@@ -49,7 +49,7 @@ initialize_entity_manager :: proc(asset_manager: ^asset.Manager, manager: ^Entit
     // Test entity for animation
     test_entity := create_entity(manager)
     test_entity.name = "Test entity"
-    test_entity.tags = {.Render, .Animated, .Debug_Skeleton}
+    test_entity.tags = {.Render, .Animated }
     test_entity.mesh = asset.get_mesh(asset_manager, asset_manager.catalog.animation.meshes[0])
     skeleton := asset.get_skeleton(asset_manager, asset_manager.catalog.animation.skeletons[0])
     animation := asset.get_animation(asset_manager, asset_manager.catalog.animation.animations[0])
@@ -115,6 +115,7 @@ update_entities :: proc(memory: ^Game_Memory) {
 
         if .Render in entity.tags {
             assert(entity.mesh != nil)
+            animator := .Animated in entity.tags ? &entity.animator : nil
             push_mesh(
                 &memory.render_group,
                 entity.mesh,
@@ -122,6 +123,7 @@ update_entities :: proc(memory: ^Game_Memory) {
                 translation = entity.position,
                 rotation = entity.rotation,
                 scale = entity.scale,
+                animator = animator,
             )
         }
 

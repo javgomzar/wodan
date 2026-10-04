@@ -181,6 +181,7 @@ Renderer_Context :: struct {
     static_buffers:             struct {
         position:               ^d3d12.IResource,
         attribute:              ^d3d12.IResource,
+        joint:                  ^d3d12.IResource,
         index:                  ^d3d12.IResource,
     },
     dynamic_buffers:            [N_BACK_BUFFERS]struct {
@@ -194,6 +195,8 @@ Renderer_Context :: struct {
         text_instance_memory:   rawptr,
         text_offset:            ^d3d12.IResource,
         text_offset_memory:     rawptr,
+        poses:                  ^d3d12.IResource,
+        poses_memory:           rawptr,
     },
     root_signature:             ^d3d12.IRootSignature,
     textures:                   map[asset.ID]u32,
@@ -211,8 +214,6 @@ initialize_renderer :: proc(
     renderer: ^Renderer_Context,
     render_group: ^Render_Group,
 ) {
-    start := common.get_wall_clock()
-
     hr: w32.HRESULT
     renderer.window = w32.GetActiveWindow()
 
@@ -555,6 +556,8 @@ initialize_renderer :: proc(
     defer delete(static_positions)
     static_attributes: [dynamic]asset.Vertex_Attributes
     defer delete(static_attributes)
+    static_joints: [dynamic]asset.Vertex_Joint
+    defer delete(static_joints)
     static_indices: [dynamic]u32
     defer delete(static_indices)
 
@@ -575,6 +578,11 @@ initialize_renderer :: proc(
                 append(&static_indices, ..primitive.indices)
                 delete(primitive.indices)
             }
+            if len(primitive.joints) > 0 {
+                primitive.joint_offset = len(static_joints)
+                append(&static_joints, ..primitive.joints)
+                delete(primitive.joints)
+            }
         }
     }
 
@@ -589,6 +597,7 @@ initialize_renderer :: proc(
 
     renderer.static_buffers.position = create_static_buffer(renderer, static_positions[:])
     renderer.static_buffers.attribute = create_static_buffer(renderer, static_attributes[:])
+    renderer.static_buffers.joint = create_static_buffer(renderer, static_joints[:])
     renderer.static_buffers.index = create_static_buffer(renderer, static_indices[:])
 
     append(&resource_barriers, 
@@ -666,6 +675,12 @@ initialize_renderer :: proc(
             renderer.device, 
             u32(render_group.text_offsets.capacity * size_of(u32))
         )
+
+        render_group.poses.capacity = DYNAMIC_BUFFER_SIZE / size_of([16]f32)
+        renderer.dynamic_buffers[i].poses, renderer.dynamic_buffers[i].poses_memory = create_mapped_buffer(
+            renderer.device,
+            u32(render_group.poses.capacity * size_of([16]f32))
+        )
     }
 
     render_group.indices.memory = cast([^]u32)renderer.dynamic_buffers[0].position_memory
@@ -673,6 +688,7 @@ initialize_renderer :: proc(
     render_group.attributes.memory = cast([^]asset.Vertex_Attributes)renderer.dynamic_buffers[0].index_memory
     render_group.text_vertices.memory = cast([^]asset.Vertex_Text)renderer.dynamic_buffers[0].text_instance_memory
     render_group.text_offsets.memory = cast([^]u32)renderer.dynamic_buffers[0].text_offset_memory
+    render_group.poses.memory = cast([^][16]f32)renderer.dynamic_buffers[0].poses_memory
 
     // Constant buffers
     for i in 0..<N_BACK_BUFFERS {
@@ -721,11 +737,14 @@ initialize_renderer :: proc(
     // Shaders
     initialize_shader_compiler(&renderer.shader_compiler)
 
+    start := common.get_wall_clock()
     for id in Shader_ID {
         if id == .None do continue
         initialize_shader(id, &renderer.shaders)
         compile_shader(&renderer.shader_compiler, &renderer.shaders[id])
     }
+    end := common.get_wall_clock()
+    log.info("Shaders compiled in", 1000 * common.get_seconds_elapsed(start, end), "milliseconds")
 
     // Pipelines
     create_root_signature(renderer, n_srv_descriptors)
@@ -734,9 +753,6 @@ initialize_renderer :: proc(
     }
 
     renderer.frame = 0
-
-    end := common.get_wall_clock()
-    log.info("Renderer initialized in", 1000.0 * common.get_seconds_elapsed(start, end), "milliseconds.")
 }
 
 create_texture :: proc(
@@ -1014,6 +1030,7 @@ render :: proc(memory: ^Game_Memory) {
             material_color = entry.material.base_color,
             metallic = entry.material.metallic,
             roughness = entry.material.roughness,
+            joints = u32(entry.pose.count),
         }
         if entry.material.texture.color != 0 {
             per_draw_data.color_texture_index = renderer.textures[entry.material.texture.color]
@@ -1030,6 +1047,7 @@ render :: proc(memory: ^Game_Memory) {
         positions := entry.dynamic_buffer ? renderer.dynamic_buffers[frame_index].position : renderer.static_buffers.position
         attributes := entry.dynamic_buffer ? renderer.dynamic_buffers[frame_index].attribute : renderer.static_buffers.attribute
         indices := entry.dynamic_buffer ? renderer.dynamic_buffers[frame_index].index : renderer.static_buffers.index
+        joints := renderer.static_buffers.joint
         
         if entry.instances.count > 0 {
             renderer.command_list->SetGraphicsRootShaderResourceView(3, 
@@ -1041,20 +1059,39 @@ render :: proc(memory: ^Game_Memory) {
             entry.instances.count = 1
         }
 
-        vertex_buffers := []d3d12.VERTEX_BUFFER_VIEW{
+        n_vertex_buffers := u32(1)
+        vertex_buffers := [3]d3d12.VERTEX_BUFFER_VIEW{
             {
                 BufferLocation = positions->GetGPUVirtualAddress() + u64(entry.positions.offset * size_of(asset.Vertex_Position)),
                 SizeInBytes = u32(entry.positions.count * size_of(asset.Vertex_Position)),
                 StrideInBytes = size_of(asset.Vertex_Position),
             },
-            {
-                BufferLocation = attributes != nil ? attributes->GetGPUVirtualAddress() + u64(entry.attributes.offset * size_of(asset.Vertex_Attributes)) : 0,
+            {},
+            {},
+        }
+
+        if entry.attributes.count > 0 {
+            vertex_buffers[1] = {
+                BufferLocation = attributes->GetGPUVirtualAddress() + u64(entry.attributes.offset * size_of(asset.Vertex_Attributes)),
                 SizeInBytes = u32(entry.attributes.count * size_of(asset.Vertex_Attributes)),
                 StrideInBytes = size_of(asset.Vertex_Attributes),
-            },
+            }
+            n_vertex_buffers += 1
+        }
+
+        if entry.joints.count > 0 {
+            vertex_buffers[n_vertex_buffers] = {
+                BufferLocation = joints->GetGPUVirtualAddress() + u64(entry.joints.offset * size_of(asset.Vertex_Joint)),
+                SizeInBytes = u32(entry.joints.count * size_of(asset.Vertex_Joint)),
+                StrideInBytes = size_of(asset.Vertex_Joint),
+            }
+            n_vertex_buffers += 1
+
+            renderer.command_list->SetGraphicsRootShaderResourceView(5, 
+                renderer.dynamic_buffers[frame_index].poses->GetGPUVirtualAddress() + u64(entry.pose.offset * size_of([16]f32)))
         }
         
-        renderer.command_list->IASetVertexBuffers(0, entry.attributes.count > 0 ? 2 : 1, raw_data(vertex_buffers))
+        renderer.command_list->IASetVertexBuffers(0, n_vertex_buffers, &vertex_buffers[0])
 
         if entry.indices.count > 0 {
             index_buffer_view := d3d12.INDEX_BUFFER_VIEW{
@@ -1129,6 +1166,7 @@ render :: proc(memory: ^Game_Memory) {
     asset.clear_vertex_buffer(&group.indices)
     asset.clear_vertex_buffer(&group.text_vertices)
     asset.clear_vertex_buffer(&group.text_offsets)
+    asset.clear_vertex_buffer(&group.poses)
 
     next_frame_index := (frame_index + 1) % N_BACK_BUFFERS
     group.positions.memory = cast([^]asset.Vertex_Position)renderer.dynamic_buffers[next_frame_index].position_memory
@@ -1136,6 +1174,7 @@ render :: proc(memory: ^Game_Memory) {
     group.indices.memory = cast([^]u32)renderer.dynamic_buffers[next_frame_index].index_memory
     group.text_vertices.memory = cast([^]asset.Vertex_Text)renderer.dynamic_buffers[next_frame_index].text_instance_memory
     group.text_offsets.memory = cast([^]u32)renderer.dynamic_buffers[next_frame_index].text_offset_memory
+    group.poses.memory = cast([^][16]f32)renderer.dynamic_buffers[next_frame_index].poses_memory
 }
 
 }

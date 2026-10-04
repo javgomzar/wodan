@@ -365,7 +365,7 @@ Animator :: struct {
     loop:      Animator_Loop,
     indices:   []int,
     poses:     []Joint_Pose,
-    transform: []matrix[4,4]f32,
+    transform: [][16]f32,
     active:    bool,
 }
 
@@ -387,7 +387,7 @@ start_animator :: proc(animator: ^Animator, skeleton: ^Skeleton, animation: ^Ani
         pose.rotation = 1
         pose.scale = 1
     }
-    animator.transform = make([]matrix[4,4]f32, len(skeleton.joints))
+    animator.transform = make([][16]f32, len(skeleton.joints))
     animator.active = true
 }
 
@@ -402,6 +402,13 @@ update_animator :: proc(animator: ^Animator, dt: f32) {
                     animator.time = math.mod(animator.time, animator.animation.duration)
             }
         }
+    }
+
+    // Clean previous poses
+    for &pose in animator.poses {
+        pose.translation = 0
+        pose.rotation = 1
+        pose.scale = 1
     }
     
     for &channel, index in animator.animation.channels {
@@ -484,5 +491,26 @@ update_animator :: proc(animator: ^Animator, dt: f32) {
             case:
                 log.fatal("Invalid channel target", channel.target)
         }
+    }
+
+    // Output matrices
+    for bone, index in animator.skeleton.joints {
+        parent_transform: matrix[4, 4]f32 = 1
+        parent_id := bone.parent
+        for parent_id != -1 {
+            parent := animator.skeleton.joints[parent_id]
+            parent_pose := animator.poses[parent_id]
+            parent_transform = linalg.matrix4_from_trs_f32(
+                parent_pose.translation, 
+                parent_pose.rotation, 
+                parent_pose.scale
+            ) * parent_transform
+            parent_id = parent.parent
+        }
+        parent_transform = animator.skeleton.global_transform * parent_transform
+        pose := animator.poses[index]
+        pose_matrix := linalg.matrix4_from_trs_f32(pose.translation, pose.rotation, pose.scale)
+        output := linalg.transpose(parent_transform * pose_matrix * linalg.transpose(bone.inverse_bind))
+        animator.transform[index] = transmute([16]f32)output
     }
 }

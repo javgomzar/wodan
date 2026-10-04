@@ -263,7 +263,8 @@ Per_Draw_Data :: struct #align(256) {
     roughness:            f32,
     color_texture_index:  u32,
     normal_texture_index: u32,
-    pbr_texture_index:   u32,
+    pbr_texture_index:    u32,
+    joints:               u32,
 }
 
 DXC_Shader :: struct {
@@ -567,6 +568,15 @@ create_root_signature :: proc(renderer: ^Renderer_Context, n_srv_descriptors: u3
             },
             ShaderVisibility = .ALL,
         },
+        {
+            // Joint transforms
+            ParameterType = .SRV,
+            Descriptor = {
+                RegisterSpace = 0,
+                ShaderRegister = 2,
+            },
+            ShaderVisibility = .ALL,
+        }
     }
 
     root_signature_desc := d3d12.VERSIONED_ROOT_SIGNATURE_DESC{
@@ -607,7 +617,7 @@ initialize_pipeline :: proc(id: Shader_Pipeline_ID, renderer: ^Renderer_Context)
     vertex_shader.reflection->GetDesc(&shader_desc)
     
     input_layout: d3d12.INPUT_LAYOUT_DESC
-    input_elements: [8]d3d12.INPUT_ELEMENT_DESC
+    input_elements: [16]d3d12.INPUT_ELEMENT_DESC
     parameter: d3d12.SIGNATURE_PARAMETER_DESC
     for i in 0..<shader_desc.InputParameters {
         vertex_shader.reflection->GetInputParameterDesc(i, &parameter)

@@ -614,9 +614,11 @@ update_ui :: proc(memory: ^Game_Memory) {
         }
 
         if .Text in element.draw_flags {
-            rect := asset.get_text_rect(element.font, element.text, 0, 0, element.points)
-            pen := position - {0, rect.top}
-            push_text(render_group, element.text, pen.x, pen.y, element.points, element.font, element.color)
+            if element.font != nil {
+                rect := asset.get_text_rect(element.font, element.text, 0, 0, element.points)
+                pen := position - {0, rect.top}
+                push_text(render_group, element.text, pen.x, pen.y, element.points, element.font, element.color)
+            }
         }
 
         element, element.next = element.next, nil

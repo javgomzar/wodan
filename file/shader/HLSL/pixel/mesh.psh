@@ -2,10 +2,10 @@
 
 struct VS_OUT {
     float4 sv_position: SV_POSITION;
-    float3 position: POSITION;
-    float3 normal: NORMAL;
-    float2 texture: TEXCOORD;
-    float4 color: COLOR;
+    float3 position:    POSITION;
+    float3 normal:      NORMAL;
+    float2 texture:     TEXCOORD;
+    float4 color:       COLOR;
 };
 
 float specular_brdf(float alpha_sq, float n_dot_h, float n_dot_l, float n_dot_v) {
