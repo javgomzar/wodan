@@ -379,9 +379,9 @@ initialize_renderer :: proc(
         Flags          = {},
     }
     hr = renderer.device->CreateDescriptorHeap(
-        &dsv_heap_desc, 
-        d3d12.IDescriptorHeap_UUID, 
-        (^rawptr)(&renderer.dsv_heap)
+        &dsv_heap_desc,
+        d3d12.IDescriptorHeap_UUID,
+        (^rawptr)(&renderer.dsv_heap.heap)
     )
     if hr < 0 do log.fatal("Failed to create DSV descriptor heap")
     renderer.dsv_heap.descriptor_size = renderer.device->GetDescriptorHandleIncrementSize(.DSV)
